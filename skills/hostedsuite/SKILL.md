@@ -304,8 +304,10 @@ records were already applied — build a retry `--ids-file` from the unapplied s
 
 ## Undo & history
 
-Every write is journaled (before + after, per record, per tenant) — so a mistake is one command to
-reverse. This is the recovery net that lets single writes stay ungated.
+Every entity write is journaled (before + after, per record, per tenant) — so a mistake is one
+command to reverse. This is the recovery net that lets single writes stay ungated. **Exception:**
+raw `hs api` writes are NOT journaled (the CLI can't map an arbitrary path back to an entity), so
+`hs undo` cannot revert them — one more reason to prefer the entity verbs.
 
 ```sh
 hs history                       # recent operations on the active tenant: opId, action, #records, (undone)

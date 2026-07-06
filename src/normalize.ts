@@ -10,7 +10,7 @@ import type { ApiVersion } from "./config.js";
  * (email), not a secret, and `hs whoami` must show it so the JSON is a usable
  * source of truth for "who am I authenticated as". Only true secrets are masked.
  */
-const CRED_KEYS = new Set(["password", "authtoken", "apikey", "secret"]);
+export const CRED_KEYS = new Set(["password", "authtoken", "apikey", "secret"]);
 
 const REDACTED = "***";
 

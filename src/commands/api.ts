@@ -38,7 +38,8 @@ export function buildApiCommand(): Command {
     .addHelpText(
       "after",
       "\nExample:\n  hs api GET /clients --query query=acme\n  hs api PATCH /clients/<id> -f body.json --force\n\n" +
-        "Safety:\n  POST/PATCH/PUT/DELETE require --force. Do NOT loop this for bulk work — use `bulk-*` so the gate applies.\n",
+        "Safety:\n  POST/PATCH/PUT/DELETE require --force. Do NOT loop this for bulk work — use `bulk-*` so the gate applies.\n" +
+        "  Raw writes are NOT journaled — `hs undo` cannot revert them; prefer the entity verbs.\n",
     )
     .action(async (method: string, resourcePath: string, opts: { query: string[]; file?: string }, command: Command) => {
       const globals = command.optsWithGlobals<GlobalFlags & { query: string[]; file?: string }>();

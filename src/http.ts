@@ -1,6 +1,6 @@
 import { CliError, EXIT, type ExitCode } from "./exit-codes.js";
 import { resolvePassword, type ApiVersion, type TenantProfile } from "./config.js";
-import { redactCreds } from "./normalize.js";
+import { CRED_KEYS, redactCreds } from "./normalize.js";
 
 const VERSION = "0.1.0";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -217,7 +217,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new CliError(EXIT.RETRYABLE, `Request timed out after ${timeoutMs}ms: ${url}`);
+      throw new CliError(EXIT.RETRYABLE, `Request timed out after ${timeoutMs}ms: ${redactUrl(url)}`);
     }
     throw new CliError(EXIT.RETRYABLE, `Network error: ${(err as Error).message}`);
   } finally {
@@ -280,7 +280,24 @@ function formatHttpError(method: string, url: string, status: number, data: unkn
   // Redact any echoed credentials (v2 error bodies may reflect the request).
   const safe = data && typeof data === "object" ? redactCreds(data) : undefined;
   const detail = safe ? JSON.stringify(safe) : redactRawText(rawText).slice(0, 500);
-  return `${method} ${url} → ${status}\n${detail}`;
+  return `${method} ${redactUrl(url)} → ${status}\n${detail}`;
+}
+
+/**
+ * Mask secret query values before a URL reaches any error message — the v2 GET
+ * routes carry credentials in the query string (see buildV2), so an error or
+ * timeout message must never echo the URL verbatim.
+ */
+export function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    for (const k of [...u.searchParams.keys()]) {
+      if (CRED_KEYS.has(k.toLowerCase())) u.searchParams.set(k, "***");
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 function redactRawText(text: string): string {

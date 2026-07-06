@@ -165,6 +165,36 @@ describe("error → exit-code mapping", () => {
 });
 
 describe("error-body redaction", () => {
+  it("never echoes query-string credentials in a failed v2 GET's error message", async () => {
+    // buildV2 puts CustomerName/UserName/Password in the query string for GET routes —
+    // the error message must mask the URL's Password, not print it verbatim.
+    fetchMock.mockResolvedValueOnce(new Response("boom", { status: 500 }));
+    let caught: CliError | undefined;
+    try {
+      await request(v2Profile(), { method: "GET", path: "/settings/time-zones", retry: false });
+    } catch (err) {
+      caught = err as CliError;
+    }
+    expect(caught).toBeInstanceOf(CliError);
+    expect(caught!.message).not.toContain("s3cret");
+    expect(caught!.message).toContain("Password=***");
+  });
+
+  it("never echoes query-string credentials in a v2 GET timeout error", async () => {
+    const abortErr = new Error("aborted");
+    abortErr.name = "AbortError";
+    fetchMock.mockRejectedValueOnce(abortErr);
+    let caught: CliError | undefined;
+    try {
+      await request(v2Profile(), { method: "GET", path: "/settings/time-zones", retry: false, timeoutMs: 5 });
+    } catch (err) {
+      caught = err as CliError;
+    }
+    expect(caught).toBeInstanceOf(CliError);
+    expect(caught!.code).toBe(EXIT.RETRYABLE);
+    expect(caught!.message).not.toContain("s3cret");
+  });
+
   it("redacts credentials echoed back in a v2 error body", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ UserName: "user@example.com", Password: "s3cret", message: "invalid" }, 400),

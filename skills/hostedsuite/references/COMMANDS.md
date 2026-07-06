@@ -147,6 +147,8 @@ usable to build a retry `--ids-file`.
 
 Every write (`create`/`patch`/`delete`/`restore`, single and bulk, v2+v3) appends a before/after entry
 to a per-tenant journal at `~/.cache/hostedsuite/journal/<alias>.jsonl`. Disable with `HS_NO_JOURNAL=1`.
+(Exception: raw `hs api` writes are NOT journaled — the CLI cannot map an arbitrary path back to an
+entity — so `hs undo` cannot revert them.)
 
 ```
 hs history [--tenant <alias>] [-n <N=20>] [--all]   # recent ops: opId, ts, action, #records, (undone)
@@ -530,5 +532,6 @@ command (explicitly out of scope — legacy MCP system, not used by this CLI).
 covers `bulk-patch`/`bulk-archive`/`bulk-restore` (gated for blast radius — but still journaled and
 undoable via `hs undo` once confirmed), a v2 `<noun> delete --hard`, and `dialing-rule create`/`update`
 (the latter two gated because they are genuinely irreversible — no delete/restore route — and are
-**not** journaled). Every other write (`create`, `patch`, plain `delete`, v3 delete) is an ordinary
-single write gated only by `--force`, and is journaled/undoable via `hs history`/`hs undo`.
+**not** journaled). Every other entity write (`create`, `patch`, plain `delete`, v3 delete) is an
+ordinary single write gated only by `--force`, and is journaled/undoable via `hs history`/`hs undo`.
+Raw `hs api` writes require `--force` but are neither gated nor journaled.
