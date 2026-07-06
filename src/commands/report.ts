@@ -183,17 +183,46 @@ function collect(value: string, prev: string[] = []): string[] {
   return [...prev, value];
 }
 
-function parseParams(pairs: string[]): Record<string, string | string[]> {
-  const out: Record<string, string | string[]> = {};
+/** A leaf report param value: a scalar or a repeated-flag array. */
+type FlatParam = string | string[];
+/** A report param value: a leaf, or a nested date-window object (`DateRange.Start=…`). */
+type ParamValue = FlatParam | Record<string, FlatParam>;
+
+/** Accumulate `key=val`, promoting a repeated key to an array (matches flat behaviour). */
+function accumulate(container: Record<string, FlatParam>, key: string, val: string): void {
+  const existing = container[key];
+  if (existing === undefined) container[key] = val;
+  else if (Array.isArray(existing)) existing.push(val);
+  else container[key] = [existing, val];
+}
+
+/**
+ * Parse `--param k=v` pairs. A flat key (`Center=abc`) maps to a scalar/array.
+ * A dotted key (`DateRange.Start=2026-01-01`) assembles a nested object
+ * (`{ DateRange: { Start } }`) which the HTTP layer JSV-encodes — the shape the
+ * server's `DateRange`/`TimeRange` complex report params bind from. Server
+ * property names are case-insensitive, so `DateRange.start` binds equally well.
+ */
+function parseParams(pairs: string[]): Record<string, ParamValue> {
+  const out: Record<string, ParamValue> = {};
   for (const pair of pairs) {
     const eq = pair.indexOf("=");
     if (eq === -1) throw new CliError(EXIT.USAGE, `--param expects k=v, got "${pair}".`);
-    const key = pair.slice(0, eq);
+    const rawKey = pair.slice(0, eq);
     const val = pair.slice(eq + 1);
-    const existing = out[key];
-    if (existing === undefined) out[key] = val;
-    else if (Array.isArray(existing)) existing.push(val);
-    else out[key] = [existing, val];
+    const dot = rawKey.indexOf(".");
+    if (dot === -1) {
+      accumulate(out as Record<string, FlatParam>, rawKey, val);
+      continue;
+    }
+    const parent = rawKey.slice(0, dot);
+    const child = rawKey.slice(dot + 1);
+    let nested = out[parent];
+    if (nested === undefined || typeof nested === "string" || Array.isArray(nested)) {
+      nested = {};
+      out[parent] = nested;
+    }
+    accumulate(nested, child, val);
   }
   return out;
 }
@@ -219,7 +248,12 @@ export function buildReportCommand(): Command {
     .option("--format <fmt>", "xlsx | pdf | json (default json)")
     .addHelpText(
       "after",
-      "\nExample:\n  hs report run client-excel-report --param from=2026-01-01 --param to=2026-06-30 --format xlsx --out report.xlsx\n\n" +
+      "\nExamples:\n" +
+        "  hs report run client-excel-report --param Center=<id> --format xlsx --out report.xlsx\n" +
+        "  hs report run charge-summary-report --param DateRange.Start=2026-01-01 --param DateRange.End=2026-06-30 --format xlsx --out charges.xlsx\n" +
+        "  hs report run weekly-call-breakdown-report --param TimeRange.Start=2026-01-01 --param TimeRange.End=2026-01-31\n\n" +
+        "Params:\n  Date windows are complex props — pass the sub-fields with a dotted key: --param DateRange.Start=… " +
+        "--param DateRange.End=… (or TimeRange.Start/End). There is no from=/to= param. --format sets the DTO Format field.\n\n" +
         "Safety:\n  Read-only. Report endpoints are concurrency-capped (429 → retried after Retry-After); run them serially.\n",
     )
     .action(async (name: string, opts: { param: string[]; format?: string }, command: Command) => {
@@ -235,7 +269,7 @@ export function buildReportCommand(): Command {
       }
 
       const reportPath = normalizeReportPath(name);
-      const query: Record<string, string | string[]> = parseParams(opts.param);
+      const query: Record<string, ParamValue> = parseParams(opts.param);
       if (format !== "json") query.format = format;
 
       if (globals.dryRun) {

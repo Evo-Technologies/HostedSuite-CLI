@@ -48,6 +48,23 @@ describe("list filter flag → query mapping (filterQuery, v3)", () => {
     const out = filterQuery(client.v3!.listFilters, { centerId: undefined, categoryId: [] });
     expect(out).toEqual({});
   });
+
+  it("merges a date-range pair into one nested object for a non-client entity (department)", () => {
+    // `department` was wired with name + a dateCreated range (--created-after/--created-before).
+    // The two nest{parent:"dateCreated"} flags must collapse into one { start, end } object.
+    const department = findEntity("department")!;
+    const out = filterQuery(department.v3!.listFilters, {
+      createdAfter: "2026-01-01",
+      createdBefore: "2026-06-30",
+    });
+    expect(out).toEqual({ dateCreated: { start: "2026-01-01", end: "2026-06-30" } });
+  });
+
+  it("maps a repeatable array filter onto its (pluralised) camel query field (reservation)", () => {
+    // `--meeting-room-id` (opt key meetingRoomId) maps onto the v3 field meetingRoomIds.
+    const out = filterQuery(reservation.v3!.listFilters, { meetingRoomId: ["r1", "r2"] });
+    expect(out).toEqual({ meetingRoomIds: ["r1", "r2"] });
+  });
 });
 
 describe("list filter flag → body mapping (filterBody, v2 PascalCase)", () => {

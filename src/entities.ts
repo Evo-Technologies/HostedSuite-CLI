@@ -262,8 +262,13 @@ export const ENTITIES: EntityDef[] = [
     v3: {
       uriBase: "/clients",
       listFilters: [
+        { option: "--name <text>", description: "Filter by client name", field: "name" },
         { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
         { option: "--category-id <id>", description: "Filter by category id (repeatable)", field: "categoryIds", repeatable: true },
+        { option: "--contract-id <id>", description: "Filter by contract id", field: "contractId" },
+        { option: "--reference-id <id>", description: "Filter by external reference id", field: "referenceId" },
+        { option: "--billing-email-address <email>", description: "Filter by billing email address", field: "billingEmailAddress" },
+        { option: "--ai-config-source <src>", description: "Filter by AI config source (ClientAIConfigSources: Local, ResellerPortal)", field: "aiConfigSource" },
         ...dateRangeFilter("dateCreated", "created"),
       ],
     },
@@ -296,6 +301,11 @@ export const ENTITIES: EntityDef[] = [
       listFilters: [
         { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
         { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+        { option: "--first-name <text>", description: "Filter by first name", field: "firstName" },
+        { option: "--last-name <text>", description: "Filter by last name", field: "lastName" },
+        { option: "--email <text>", description: "Filter by email address", field: "emailAddress" },
+        { option: "--reference-id <id>", description: "Filter by external reference id", field: "referenceId" },
+        { option: "--include-information <bool>", description: "Include extended information (true/false)", field: "includeInformation" },
         ...dateRangeFilter("dateCreated", "created"),
       ],
     },
@@ -325,7 +335,15 @@ export const ENTITIES: EntityDef[] = [
 
   // --- operational entities (v3 + v2 where mapped) -------------------------
   {
-    ...v3Entity("center", "centers", "/centers"),
+    ...v3Entity("center", "centers", "/centers", {
+      listFilters: [
+        { option: "--name <text>", description: "Filter by center name", field: "name" },
+        { option: "--latitude <deg>", description: "Filter by latitude (decimal degrees)", field: "latitude" },
+        { option: "--longitude <deg>", description: "Filter by longitude (decimal degrees)", field: "longitude" },
+        { option: "--distance <mi>", description: "Filter by distance from the given lat/long", field: "distance" },
+        ...dateRangeFilter("dateCreated", "created"),
+      ],
+    }),
     v2: {
       list: {
         route: "/centers",
@@ -342,6 +360,13 @@ export const ENTITIES: EntityDef[] = [
     ...v3Entity("charge", "charges", "/charges", {
       listFilters: [
         { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+        { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+        { option: "--service-id <id>", description: "Filter by service id", field: "serviceId" },
+        { option: "--contact-id <id>", description: "Filter by contact id", field: "contactId" },
+        { option: "--description <text>", description: "Filter by description", field: "description" },
+        { option: "--memorized <bool>", description: "Filter by memorized flag (true/false)", field: "memorized" },
+        ...dateRangeFilter("dateCreated", "created"),
+        ...dateRangeFilter("dateOfCharge", "charged"),
       ],
     }),
     v2: {
@@ -360,7 +385,19 @@ export const ENTITIES: EntityDef[] = [
     },
   },
   {
-    ...v3Entity("service", "services", "/services"),
+    ...v3Entity("service", "services", "/services", {
+      listFilters: [
+        { option: "--name <text>", description: "Filter by service name", field: "name" },
+        { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+        { option: "--description <text>", description: "Filter by description", field: "description" },
+        { option: "--tax-id <id>", description: "Filter by tax id", field: "taxId" },
+        { option: "--parent-service-id <id>", description: "Filter by parent service id", field: "parentServiceId" },
+        { option: "--meta-service-id <id>", description: "Filter by meta service id", field: "metaServiceId" },
+        { option: "--special-type <type>", description: "Filter by special service type (SpecialServiceTypes: None, CallCount, CallMinutes, IncomingCallCount, OutgoingCallCount, IncomingCallMinutes, OutgoingCallMinutes, Product, AIMinutes, AICall, AIChatMessage)", field: "specialType" },
+        { option: "--code <code>", description: "Filter by service code", field: "code" },
+        ...dateRangeFilter("dateCreated", "created"),
+      ],
+    }),
     v2: {
       // v2 supports ONLY list for services.
       list: {
@@ -374,7 +411,12 @@ export const ENTITIES: EntityDef[] = [
     },
   },
   {
-    ...v3Entity("industry", "industries", "/industries"),
+    ...v3Entity("industry", "industries", "/industries", {
+      listFilters: [
+        { option: "--name <text>", description: "Filter by industry name", field: "name" },
+        ...dateRangeFilter("dateCreated", "created"),
+      ],
+    }),
     v2: {
       list: { route: "/industries" },
       create: { route: "/industries/save", fieldMap: INDUSTRY_V2_CREATE },
@@ -382,12 +424,46 @@ export const ENTITIES: EntityDef[] = [
       hardDelete: { route: "/industries/delete", idField: "IndustryId" },
     },
   },
-  v3Entity("category", "categories", "/categories"),
-  v3Entity("department", "departments", "/departments"),
-  v3Entity("calendar", "calendars", "/calendars"),
-  v3Entity("contract", "contracts", "/contracts"),
+  v3Entity("category", "categories", "/categories", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by category name", field: "name" },
+      { option: "--description <text>", description: "Filter by description", field: "description" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--role <role>", description: "Filter by category role (CategoryRoles: None, CallDisposition)", field: "role" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("department", "departments", "/departments", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by department name", field: "name" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("calendar", "calendars", "/calendars", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by calendar name", field: "name" },
+      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("contract", "contracts", "/contracts", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by contract name", field: "name" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--master-id <id>", description: "Filter by master contract id", field: "masterId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
   {
-    ...v3Entity("meeting-room", "meeting-rooms", "/meeting-rooms"),
+    ...v3Entity("meeting-room", "meeting-rooms", "/meeting-rooms", {
+      listFilters: [
+        { option: "--name <text>", description: "Filter by meeting room name", field: "name" },
+        { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+        { option: "--visibility <vis>", description: "Filter by visibility (MeetingRoomVisibility: Everyone, InternalUseOnly, ReadOnlyExternal)", field: "visibility" },
+        { option: "--bill-as-service-id <id>", description: "Filter by bill-as service id", field: "billAsServiceId" },
+        ...dateRangeFilter("dateCreated", "created"),
+      ],
+    }),
     v2: {
       // v2 supports list + a dedicated single-get; no create/update/delete.
       list: {
@@ -397,7 +473,15 @@ export const ENTITIES: EntityDef[] = [
       getOne: { route: "/scheduling/meeting-room", idField: "Id" },
     },
   },
-  v3Entity("resource", "resources", "/scheduled-resources"),
+  v3Entity("resource", "resources", "/scheduled-resources", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by resource name", field: "name" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--description <text>", description: "Filter by description", field: "description" },
+      { option: "--bill-as-service-id <id>", description: "Filter by bill-as service id", field: "billAsServiceId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
 
   // Scheduling: body-id PATCH (API-NOTES §4) + a CLIENT-SIDE ≤7-day list window
   // guard (maxListWindowDays) enforced before the request.
@@ -449,37 +533,179 @@ export const ENTITIES: EntityDef[] = [
   }),
 
   // --- CRM / long tail (v3 only) -------------------------------------------
-  v3Entity("lead", "leads", "/leads"),
-  v3Entity("lead-source", "lead-sources", "/lead-source"),
-  v3Entity("lead-stage", "lead-stages", "/lead-stages"),
-  v3Entity("team-member", "team-members", "/team-members"),
-  v3Entity("user-group", "user-groups", "/user-groups"),
-  v3Entity("administrator", "administrators", "/administrators"),
-  v3Entity("webhook", "webhooks", "/webhooks"),
-  v3Entity("speed-dial", "speed-dials", "/speed-dials"),
-  v3Entity("tax", "taxes", "/taxes"),
-  v3Entity("relationship", "relationships", "/relationships"),
-  v3Entity("responsibility", "responsibilities", "/responsibilities"),
-  v3Entity("phone-system", "phone-systems", "/phone-systems"),
-  v3Entity("form", "forms", "/forms"),
-  v3Entity("template", "templates", "/templates"),
-  v3Entity("integration", "integrations", "/integrations"),
-  v3Entity("reception-call", "reception-calls", "/reception-calls"),
-  v3Entity("call-insight", "call-insights", "/callinsights"),
-  v3Entity("server", "servers", "/servers"),
+  v3Entity("lead", "leads", "/leads", {
+    listFilters: [...dateRangeFilter("dateCreated", "created")],
+  }),
+  v3Entity("lead-source", "lead-sources", "/lead-source", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by lead source name", field: "name" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("lead-stage", "lead-stages", "/lead-stages", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by lead stage name", field: "name" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("team-member", "team-members", "/team-members", {
+    listFilters: [
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--first-name <text>", description: "Filter by first name", field: "firstName" },
+      { option: "--last-name <text>", description: "Filter by last name", field: "lastName" },
+      { option: "--user-name <text>", description: "Filter by user name", field: "userName" },
+      { option: "--user-group-id <id>", description: "Filter by user group id", field: "userGroupId" },
+      { option: "--email <text>", description: "Filter by email address", field: "emailAddress" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("user-group", "user-groups", "/user-groups", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by user group name", field: "name" },
+      { option: "--type <type>", description: "Filter by user group type (UserGroupTypes: Team, Client, Any)", field: "type" },
+      { option: "--parent-center-id <id>", description: "Filter by parent center id", field: "parentCenterId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("administrator", "administrators", "/administrators", {
+    listFilters: [
+      { option: "--user-name <text>", description: "Filter by user name", field: "userName" },
+      { option: "--email <text>", description: "Filter by email address", field: "emailAddress" },
+      { option: "--first-name <text>", description: "Filter by first name", field: "firstName" },
+      { option: "--last-name <text>", description: "Filter by last name", field: "lastName" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("webhook", "webhooks", "/webhooks", {
+    listFilters: [
+      { option: "--url <url>", description: "Filter by webhook URL", field: "url" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("speed-dial", "speed-dials", "/speed-dials", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by speed dial name", field: "name" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("tax", "taxes", "/taxes", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by tax name", field: "name" },
+      { option: "--type <type>", description: "Filter by tax type (TaxTypes: Percentage, Flat)", field: "type" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("relationship", "relationships", "/relationships", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by relationship name", field: "name" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("responsibility", "responsibilities", "/responsibilities", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by responsibility name", field: "name" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("phone-system", "phone-systems", "/phone-systems", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by phone system name", field: "name" },
+      { option: "--run-on-server-id <id>", description: "Filter by run-on server id", field: "runOnServerId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("form", "forms", "/forms", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by form name", field: "name" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      { option: "--contact-id <id>", description: "Filter by contact id", field: "contactId" },
+      { option: "--bill-as-service-id <id>", description: "Filter by bill-as service id", field: "billAsServiceId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("template", "templates", "/templates", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by template name", field: "name" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("integration", "integrations", "/integrations", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by integration name", field: "name" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("reception-call", "reception-calls", "/reception-calls", {
+    listFilters: [
+      { option: "--call-type <type>", description: "Filter by call type (CallTypes: Voice, Text, AI)", field: "callType" },
+      { option: "--type <type>", description: "Filter by reception call type (ReceptionCallTypes: Incoming, Outgoing, Transfer)", field: "type" },
+      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+      { option: "--caller <text>", description: "Filter by caller", field: "caller" },
+      ...dateRangeFilter("dateCreated", "created"),
+      ...dateRangeFilter("startTime", "start"),
+    ],
+  }),
+  v3Entity("call-insight", "call-insights", "/callinsights", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by call insight name", field: "name" },
+      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("server", "servers", "/servers", {
+    listFilters: [
+      { option: "--name <text>", description: "Filter by server name", field: "name" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
 
   // ai-session survives only as a plain entity for legacy cleanup (PLAN §1).
   v3Entity("ai-session", "ai-sessions", "/ai-sessions", {
     listFilters: [
       { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
       { option: "--purpose <text>", description: "Filter by purpose", field: "purpose" },
+      ...dateRangeFilter("dateCreated", "created"),
     ],
   }),
 
   // --- read-only resources -------------------------------------------------
-  v3Entity("email", "emails", "/email", { readOnly: true }),
-  v3Entity("completed-form", "completed-forms", "/completed-forms", { readOnly: true }),
-  v3Entity("webhook-call", "webhook-calls", "/webhookcalls", { readOnly: true }),
+  v3Entity("email", "emails", "/email", {
+    readOnly: true,
+    listFilters: [
+      { option: "--status <status>", description: "Filter by status (EmailMessageStatuses: Draft, NotSentYet, Sent, NotRead, Read, Error)", field: "status" },
+      { option: "--subject <text>", description: "Filter by subject", field: "subject" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
+  v3Entity("completed-form", "completed-forms", "/completed-forms", {
+    readOnly: true,
+    listFilters: [
+      { option: "--name <text>", description: "Filter by form name", field: "name" },
+      { option: "--form-id <id>", description: "Filter by form id", field: "formId" },
+      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      { option: "--contact-id <id>", description: "Filter by contact id", field: "contactId" },
+      { option: "--email-subject <text>", description: "Filter by email subject", field: "emailSubject" },
+      { option: "--caller-number <text>", description: "Filter by caller number", field: "callerNumber" },
+      ...dateRangeFilter("dateCreated", "created"),
+      ...dateRangeFilter("dateCompleted", "completed"),
+    ],
+  }),
+  v3Entity("webhook-call", "webhook-calls", "/webhookcalls", {
+    readOnly: true,
+    listFilters: [
+      { option: "--webhook-id <id>", description: "Filter by webhook id", field: "webhookId" },
+      { option: "--event <event>", description: "Filter by event (WebhookEvents: ClientCreated, ClientUpdated, ClientArchived, ReservationScheduled, ReservationUpdated, ReservationCancelled, ReservationDeleted, ContactCreated, ContactUpdated, ContactArchived)", field: "event" },
+      { option: "--status <status>", description: "Filter by status (WebhookCallStatuses: Attempting, Success, Error)", field: "status" },
+      ...dateRangeFilter("dateCreated", "created"),
+    ],
+  }),
   v3Entity("ai-session-change", "ai-session-changes", "/ai-session-changes", { readOnly: true }),
 
   // --- singleton -----------------------------------------------------------
