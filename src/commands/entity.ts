@@ -208,8 +208,10 @@ async function listV3(
     ids: opts.ids ? opts.ids.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
     archived: opts.archived ? true : undefined,
     detailed: opts.brief ? false : undefined,
-    // Server-side sparse projection reuses the --fields/--select value (see global-flags).
-    fields: globals.select,
+    // NOTE: --select/--fields are CLIENT-SIDE projection (applied by emit() to the full
+    // response). We deliberately do NOT forward them to the server's `Fields` sparse
+    // projection — that returns null-valued fields (verified against prod). Use --brief for
+    // server-side payload reduction (Detailed=false → id + display name only).
     sortField: opts.sort,
     sortOrder: opts.sort ? (opts.desc ? "Descend" : "Ascend") : undefined,
     ...filterQuery(v3.listFilters, opts),
