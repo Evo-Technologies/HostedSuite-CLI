@@ -147,15 +147,26 @@ Reads are normalized to one shape either way. **Write bodies are always v3 camel
 no translation for that entity **exits 2, naming the field and the tenant's API version.** It never
 guesses or silently drops a field.
 
-Only `client` and `contact` currently have v2 write support (create/update/archive/restore/hard-delete
-routes exist and are mapped). Every other entity noun is v3-only: on a v2 tenant, `hs lead list` (or
-any verb on a v3-only noun) **exits 9** naming the limitation —
-`'lead list' is not available on this tenant; beta runs the v2 API`. Report this to the user; don't
-retry or route around it.
+`client`/`contact` have the fullest v2 write support (create/update/archive/restore/hard-delete).
+`center`/`industry`/`reservation`/`reception-call` also have partial v2 write support (a narrower
+mapped subset — see COMMANDS.md's entity registry for exactly which verbs). Every other entity noun is
+v3-only: on a v2 tenant, `hs lead list` (or any verb on a v3-only noun) **exits 9** naming the
+limitation — `'lead list' is not available on this tenant; beta runs the v2 API`. Report this to the
+user; don't retry or route around it.
 
 List flags differ too: `--page/--count/--all/--max/--ids/--archived/--brief/--sort/--desc` are v3
 only and exit 2 on a v2 tenant. `--query` maps to a per-entity field (clients → `Name`, contacts →
 `LastName`); v2 contacts instead expose `--first-name/--last-name/--email/--phone`.
+
+**v2-only data endpoints**: `call-allowance`, `remote-phones`, `availability` (room/resource),
+`meeting-room-resources`, and `my-contacts` have no v3 equivalent — they exit 9 there. `dialing-rule`'s
+write verbs (`create`/`update`) are v2-only too (its `list` also works read-only on v3). `time-zones`
+is the one exception that works unchanged on both API generations. See COMMANDS.md for each one's
+flags and underlying endpoint.
+
+Call records ride `hs reception-call list/get/patch` — it works on **both** versions. v3 has full
+CRUD + bulk-*; v2 only maps `list`/`get` (emulated) and `patch`/`bulk-patch` (edits `notes` only, via
+the legacy `/calls` routes) — v2 `create`/`delete`/`bulk-archive`/`bulk-restore` exit 9.
 
 ## Large payloads
 
@@ -185,6 +196,12 @@ hs contact list --last-name Smith --client-id <id>
 
 hs client get <id>
 ```
+
+Most `list` commands also take a date-range filter pair — `--<field>-after`/`--<field>-before`
+(`--created-after`/`--created-before` almost everywhere; per-entity variants like charges'
+`--charged-after`/`--charged-before` or reception-call's `--start-after`/`--start-before`). Just pass
+plain ISO dates to both flags — the CLI encodes the nested server-side range object correctly, it just
+works.
 
 Then a targeted patch with only the changed fields, **dry-run first**:
 
@@ -233,9 +250,11 @@ cap is 10,000 matched targets by default (`--max` raises it) — a **separate, s
 50,000 used by `list --all`.
 
 `bulk-archive`/`bulk-restore` take the same selectors with no `-f` body (fixed archive/restore
-requests) and work on both v2 and v3 for any writable entity. `bulk-patch` needs a per-entity v2
-field-map to work on v2 tenants — currently only `client`/`contact` have one; other nouns exit 9 on a
-v2 tenant.
+requests); on v3 they work for any writable entity. `bulk-patch` needs a per-entity v2 update map to
+work on v2 tenants — `client`/`contact`/`center`/`industry`/`reservation`/`reception-call` have one,
+other nouns exit 9. `bulk-archive`/`bulk-restore` need v2 archive/restore routes specifically, which is
+a narrower set still (see COMMANDS.md's entity registry) — don't assume bulk-patch support on a v2 noun
+implies bulk-archive/bulk-restore support too.
 
 If `hs confirm` is killed mid-run, `progress.json` next to the consumed plan shows exactly which
 records were already applied — build a retry `--ids-file` from the unapplied set (or the

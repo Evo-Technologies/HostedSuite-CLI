@@ -138,6 +138,18 @@ hs <noun> delete <id> --force [--hard]
 `--all`'s internal page size defaults to 200 (or `--count` if given) — separate from the plain `list`
 default page size of 25.
 
+Two filter shapes recur across many entities' filter sets (both work identically on `list` and on
+`bulk-*` selectors):
+
+- **Date-range pairs** — `--<label>-after`/`--<label>-before` (e.g. `--created-after`/`--created-before`
+  on nearly everything; `--charged-after`/`--charged-before` on `charge`; `--start-after`/`--start-before`
+  on `reception-call`; `--completed-after`/`--completed-before` on `completed-form`). Each pair merges
+  into one nested v3 `DateRangeFilter` (`{"dateCreated":{"start":...,"end":...}}`) — pass plain ISO dates
+  to both flags and the CLI encodes the object correctly; you never build it by hand.
+- **Repeatable array filters** — flags marked "(repeatable)" (`client --category-id`,
+  `reservation --meeting-room-id`) may be passed more than once and collect into one array field
+  (`categoryIds`, `meetingRoomIds`).
+
 ### `get`
 
 v3: direct `GET /<base>/{id}`. v2 (no single-get routes exist): emulated via `list` filtered by the
@@ -185,8 +197,11 @@ hs <noun> bulk-restore (same selectors, no body)
   general pagination mechanism to loop over), so `--max` has no effect there.
 - **Always** gates — exits 11 with the phase-1 JSON (see Response shapes above) and never executes on
   the same invocation, regardless of match count.
-- `bulk-patch` needs a v2 field map to run against a v2 tenant (currently only `client`/`contact`);
-  other nouns exit 9 on v2. `bulk-archive`/`bulk-restore` work on both versions for any writable noun.
+- `bulk-patch` needs a v2 `update` map to run against a v2 tenant — `client`/`contact`/`center`/
+  `industry`/`reservation`/`reception-call` have one; other nouns exit 9 on v2. `bulk-archive` needs a
+  v2 `archive` route (`client`/`contact`/`reservation`); `bulk-restore` needs a v2 `restore` route
+  (`client`/`contact` only) — both exit 9 on v2 for nouns without the specific route mapped, even if
+  `bulk-patch` works for that same noun.
 - Preview: first 10 records' diffs (patch) or method/path (archive/restore) print to stderr; the full
   per-record preview is written to the absolute `previewPath` from the phase-1 JSON.
 - Plan storage: `~/.cache/hostedsuite/plans/<token>/{plan.json,preview.json}` (mode 600, no
@@ -234,6 +249,80 @@ logo.png`) — content-type is validated client-side against a fixed image exten
 jpeg gif webp bmp tif tiff svg ico heic`); anything else is rejected before the request is made, since
 the server only accepts `image/*`.
 
+## v2-only data & config commands
+
+Standalone commands (not part of the `<noun>` registry, no `bulk-*`). Most have no v3 equivalent at all
+— they exit 9 there. `time-zones` is the one that works unchanged on both versions; `dialing-rule`
+splits (v3 read-only list, v2 full read/write).
+
+```
+hs call-allowance --start-date <d> --end-date <d> [--client-id <id>] [--bill-hold] [--bill-talk]
+                   [--bill-transfer] [--bill-ring] [--call-rounding None|NextMinute|Next30Seconds]
+                   [--min-duration <n>] [--max-duration <n>]
+hs dialing-rule list
+hs dialing-rule create -f <file|->                  # v2 only; body: name, template, centerId
+hs dialing-rule update <id> -f <file|->              # v2 only
+hs time-zones
+hs remote-phones
+hs availability room       --room-id <id> --start <ts> --end <ts>
+hs availability resource   --resource-id <id> [--resource-id <id2> ...] --start <ts> --end <ts>
+hs meeting-room-resources --meeting-room-id <id>
+hs my-contacts <contactId>
+```
+
+| Command | v2 | v3 | Endpoint |
+|---|---|---|---|
+| `call-allowance` | yes | exit 9 (`hs report run call-allowance-report` instead) | `POST /call-allowance/balance` |
+| `dialing-rule list` | yes | yes, read-only | v2 `POST /settings/dialing-rules`; v3 `GET /dialing-rules` |
+| `dialing-rule create`/`update` | yes | exit 9 | `POST /settings/dialing-rules/new` / `.../dialing-rule/update` |
+| `time-zones` | yes | yes | v2 `GET /settings/time-zones`; v3 `GET /time-zones` |
+| `remote-phones` | yes | exit 9, no v3 equivalent | `POST /remote-phones` |
+| `availability room` | yes | exit 9 | `POST /scheduling/check-availability` |
+| `availability resource` | yes | exit 9 | `POST /scheduling/check-resource/availability` |
+| `meeting-room-resources` | yes | exit 9, no v3 equivalent | `POST /scheduling/available-resources` |
+| `my-contacts <contactId>` | yes | exit 9, no v3 equivalent | `POST /contacts/my-contacts` |
+
+All are read-only except `dialing-rule create`/`update`, which are ordinary single writes (tenant
+banner + recent-switch note, no two-phase gate — there is no bulk form of these).
+
+## reception-call — call records (CDR)
+
+```
+hs reception-call list [--call-type Voice|Text|AI] [--type Incoming|Outgoing|Transfer]
+                       [--client-id <id>] [--center-id <id>] [--caller <text>]
+                       [--min-duration <n>] [--max-duration <n>]
+                       [--created-after/-before <date>] [--start-after/-before <date>]
+hs reception-call get <id>
+hs reception-call patch <id> (-f <file|-> | --restore)
+hs reception-call create -f <file|->        # v3 only
+hs reception-call delete <id> --force       # v3 only
+hs reception-call bulk-patch -f <file|->    # v3: any field; v2: notes only
+hs reception-call bulk-archive / bulk-restore    # v3 only
+```
+
+v3: full CRUD + bulk-* at `/reception-calls`, generated the same way as any other noun.
+
+v2: this is the legacy **call records** surface — `list` is `POST /calls` (filters: `--start-date`,
+`--end-date`, `--client-id`, `--center-id`, `--min-duration`/`--max-duration`,
+`--call-type Incoming|Outgoing`); `get` is emulated via `list` filtered by `CallRecordId`; `patch`
+(single or `bulk-patch`) maps only `notes` → `POST /calls/update` (`--restore` and every other field
+are unmapped — exit 2/9). `create`/`delete`/`bulk-archive`/`bulk-restore` have no v2 mapping and exit 9.
+
+## completed-form
+
+```
+hs completed-form list [--name <text>] [--form-id <id>] [--client-id <id>] [--contact-id <id>]
+                       [--email-subject <text>] [--caller-number <text>]
+                       [--created-after/-before <date>] [--completed-after/-before <date>]
+hs completed-form get <id>
+hs completed-form mark-read <formId>
+```
+
+Read-only on both versions — no `create`/`patch`/`delete`/`bulk-*`. v3: `/completed-forms`. v2: `list`
+is `POST /forms/completed` (`--start-date`, `--end-date`, `--client-id`, `--form-id`); v2 has no id
+filter, so `get` exits 9 there. `mark-read <formId>` is the one v2-only write (`POST /forms/mark-read`)
+— exits 9 on v3.
+
 ## client ai-settings / prompt-lint
 
 Attached only under `hs client` (AI settings ride the client entity's `aiSettings` field).
@@ -280,17 +369,17 @@ verb exits 9 on a v2 tenant.
 |---|---|---|---|
 | `client` | `/clients` | yes (full CRUD) | `ai-settings`/`prompt-lint` attach here |
 | `contact` | `/contacts` | yes (full CRUD) | v2 exposes `--first-name/--last-name/--email/--phone`; `--query`→`LastName` |
-| `center` | `/centers` | — | |
-| `charge` | `/charges` | — | `--client-id` filter |
-| `service` | `/services` | — | |
-| `industry` | `/industries` | — | |
+| `center` | `/centers` | partial (list/create/update/hard-delete) | no v2 `get` (no id filter) or archive/restore — plain `delete` (no `--hard`) exits 9 |
+| `charge` | `/charges` | list + create only | v3 adds `--service-id`/`--contact-id`/`--memorized`/`--charged-after/-before` (dateOfCharge); v2 list uses `--start-date`/`--end-date`/`--date-selector` instead; no v2 update/delete/get |
+| `service` | `/services` | list only | |
+| `industry` | `/industries` | partial (list/create/update/hard-delete) | no v2 `get` or archive/restore |
 | `category` | `/categories` | — | |
 | `department` | `/departments` | — | |
 | `calendar` | `/calendars` | — | |
 | `contract` | `/contracts` | — | |
-| `meeting-room` | `/meeting-rooms` | — | |
+| `meeting-room` | `/meeting-rooms` | list + dedicated get | no v2 create/update/delete |
 | `resource` | `/scheduled-resources` | — | |
-| `reservation` | `/reservations` | — | body-id PATCH; server enforces ≤7-day list window (not yet client-validated) |
+| `reservation` | `/reservations` | yes (list/get/create/update/archive/hard-delete; no restore) | body-id PATCH; server enforces ≤7-day list window (not yet client-validated); v2 update is a full reschedule |
 | `appointment` | `/appointments` | — | body-id PATCH; same 7-day note |
 | `lead` | `/leads` | — | |
 | `lead-source` | `/lead-source` | — | |
@@ -307,20 +396,25 @@ verb exits 9 on a v2 tenant.
 | `form` | `/forms` | — | |
 | `template` | `/templates` | — | client templates |
 | `integration` | `/integrations` | — | |
-| `reception-call` | `/reception-calls` | — | |
+| `reception-call` | `/reception-calls` | list/get/patch (notes only) + bulk-patch | v2 = call-records/CDR surface via `/calls`; no v2 create/delete/bulk-archive/bulk-restore — see § reception-call |
 | `call-insight` | `/callinsights` | — | |
 | `server` | `/servers` | — | |
 | `ai-session` | `/ai-sessions` | — | legacy-cleanup entity only (§ SKILL.md); no apply/discard command exists |
 | `email` | `/email` | — | read-only (`list`/`get` only) |
-| `completed-form` | `/completed-forms` | — | read-only |
+| `completed-form` | `/completed-forms` | list only | read-only both versions; v2 `get` exits 9 (no id filter); v2-only `mark-read` action — see § completed-form |
 | `webhook-call` | `/webhookcalls` | — | read-only |
 | `ai-session-change` | `/ai-session-changes` | — | read-only |
 | `system-settings` | `/system-settings` | — | singleton: `get`/`patch` only, no id, no bulk |
 
 ### v2 field maps (client / contact)
 
-The only two nouns with v2 write support. `create`/`update` map v3 camelCase keys to v2 PascalCase
-field names; a key not listed here is rejected (exit 2) rather than silently dropped.
+`client`/`contact` have the fullest v2 write support (create + update + archive/restore/hard-delete).
+`center`/`industry`/`reservation`/`reception-call` also have partial v2 write support (a narrower
+mapped subset — see the entity registry table above and, for `reception-call`, § reception-call).
+Every `create`/`update` maps v3 camelCase keys to v2 PascalCase field names; a key not listed for that
+entity is rejected (exit 2) rather than silently dropped. Full field maps below are given for
+`client`/`contact` only (the two with the richest mappings) — the others are small enough to be fully
+described by their table row / dedicated section.
 
 **`client` create** (`POST /clients/save`) — `name→Name`, `centerId→CenterId`, `greeting→Greeting`,
 `callInstructions→CallInstructions`, `popupInformation→PopupInformation`, `information→Information`,
@@ -351,8 +445,11 @@ the sole body field.
 Every registry noun above already has `list`/`get` (+ `create`/`patch`/`delete` unless read-only, +
 `bulk-patch`/`bulk-archive`/`bulk-restore` unless read-only or singleton) wired through the generic
 command factory. `tenant`, `whoami`/`auth`, `confirm`, `api`, `report`, `file`,
-`client ai-settings`/`prompt-lint`, `schema`, `exit-codes` are all implemented. What's *not* built:
-per-entity v2 write support beyond `client`/`contact`; client-side ≤7-day pre-validation for
-reservation/appointment windows; `--concurrency` on `confirm` (currently always serial); AI
-plans/usage/onboarding (explicitly out of scope); any AI-session apply/discard/changes-review command
-(explicitly out of scope — legacy MCP system, not used by this CLI).
+`client ai-settings`/`prompt-lint`, `completed-form mark-read`, the v2-only data/config commands
+(`call-allowance`, `dialing-rule`, `time-zones`, `remote-phones`, `availability`,
+`meeting-room-resources`, `my-contacts`), `schema`, `exit-codes` are all implemented. What's *not*
+built: per-entity v2 write support beyond `client`/`contact`/`center`/`industry`/`reservation`/
+`reception-call` (and even those are partial — see the entity registry); client-side ≤7-day
+pre-validation for reservation/appointment windows; `--concurrency` on `confirm` (currently always
+serial); AI plans/usage/onboarding (explicitly out of scope); any AI-session apply/discard/changes-review
+command (explicitly out of scope — legacy MCP system, not used by this CLI).

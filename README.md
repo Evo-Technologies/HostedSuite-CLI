@@ -101,12 +101,17 @@ on this API version, `10` config, `11` bulk confirmation required.
 
 ## Coverage & phase note
 
-`hs` ships in phases. The entity registry currently covers `client` and `contact` on **both** the v2
-and v3 APIs, plus the full v3 operational and CRM surface (centers, reservations, charges, services,
-leads, and more). Nouns that exist on only one API generation exit `9` with an explanatory message on
-the other — `--help` stays identical everywhere so the boundary is taught rather than hidden.
-Additional v2 nouns and later-phase features (scheduling window guards, file uploads) are filled in
-subsequent phases.
+`hs` covers the full v3 operational and CRM surface — clients, contacts, centers, reservations,
+appointments, charges, services, leads, forms, webhooks, call records, AI sessions, and more (run `hs
+schema --json` for the exhaustive tree) — plus reports and file upload/download. On v2, `client` and
+`contact` have full read/write; `center`, `industry`, `reservation`, and `reception-call` (call
+records) have partial write support; every other v3 noun is read-only or absent there. A handful of
+legacy v2-only data/config endpoints round out the surface: `call-allowance`, `dialing-rule`,
+`time-zones`, `remote-phones`, `availability`, `meeting-room-resources`, `my-contacts`. `list` commands
+across both API versions support date-range filtering (`--created-after`/`--created-before` and
+per-entity variants) and repeatable array filters. Nouns/verbs that exist on only one API generation
+exit `9` with an explanatory message on the other — `--help` stays identical everywhere so the boundary
+is taught rather than hidden. See `skills/hostedsuite/references/COMMANDS.md` for the full breakdown.
 
 ## License
 
