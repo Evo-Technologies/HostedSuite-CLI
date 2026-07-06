@@ -224,6 +224,11 @@ const RESERVATION_V2_CREATE: Record<string, string> = {
   paymentStatus: "PaymentStatus",
 };
 
+const RECEPTION_CALL_V2_UPDATE: Record<string, string> = {
+  // v2 /calls/update only edits Notes (empty string "" clears; null is rejected server-side).
+  notes: "Notes",
+};
+
 const RESERVATION_V2_UPDATE: Record<string, string> = {
   // Full reschedule via /scheduling/reschedule (RescheduleReservationRequest).
   meetingRoomId: "MeetingRoomId",
@@ -641,17 +646,38 @@ export const ENTITIES: EntityDef[] = [
       ...dateRangeFilter("dateCreated", "created"),
     ],
   }),
-  v3Entity("reception-call", "reception-calls", "/reception-calls", {
-    listFilters: [
-      { option: "--call-type <type>", description: "Filter by call type (CallTypes: Voice, Text, AI)", field: "callType" },
-      { option: "--type <type>", description: "Filter by reception call type (ReceptionCallTypes: Incoming, Outgoing, Transfer)", field: "type" },
-      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
-      { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
-      { option: "--caller <text>", description: "Filter by caller", field: "caller" },
-      ...dateRangeFilter("dateCreated", "created"),
-      ...dateRangeFilter("startTime", "start"),
-    ],
-  }),
+  {
+    ...v3Entity("reception-call", "reception-calls", "/reception-calls", {
+      listFilters: [
+        { option: "--call-type <type>", description: "Filter by call type (CallTypes: Voice, Text, AI)", field: "callType" },
+        { option: "--type <type>", description: "Filter by reception call type (ReceptionCallTypes: Incoming, Outgoing, Transfer)", field: "type" },
+        { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+        { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+        { option: "--caller <text>", description: "Filter by caller", field: "caller" },
+        ...dateRangeFilter("dateCreated", "created"),
+        ...dateRangeFilter("startTime", "start"),
+      ],
+    }),
+    v2: {
+      // v2 "call records" (CDRs). list POST /calls; get emulated via CallRecordId;
+      // update edits only Notes (/calls/update). No create/delete on v2.
+      list: {
+        route: "/calls",
+        idFilterField: "CallRecordId",
+        filters: [
+          { option: "--start-date <date>", description: "Window start date", field: "StartDate" },
+          { option: "--end-date <date>", description: "Window end date", field: "EndDate" },
+          { option: "--client-id <id>", description: "Filter by client id", field: "ClientId" },
+          { option: "--center-id <id>", description: "Filter by center id", field: "CenterId" },
+          { option: "--min-duration <n>", description: "Minimum call duration in seconds (talk time)", field: "MinCallDuration" },
+          { option: "--max-duration <n>", description: "Maximum call duration in seconds (talk time)", field: "MaxCallDuration" },
+          { option: "--call-type <type>", description: "Filter by call type (Incoming | Outgoing)", field: "CallType" },
+        ],
+      },
+      get: "via-list",
+      update: { route: "/calls/update", idField: "Id", fieldMap: RECEPTION_CALL_V2_UPDATE },
+    },
+  },
   v3Entity("call-insight", "call-insights", "/callinsights", {
     listFilters: [
       { option: "--name <text>", description: "Filter by call insight name", field: "name" },
@@ -684,19 +710,34 @@ export const ENTITIES: EntityDef[] = [
       ...dateRangeFilter("dateCreated", "created"),
     ],
   }),
-  v3Entity("completed-form", "completed-forms", "/completed-forms", {
-    readOnly: true,
-    listFilters: [
-      { option: "--name <text>", description: "Filter by form name", field: "name" },
-      { option: "--form-id <id>", description: "Filter by form id", field: "formId" },
-      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
-      { option: "--contact-id <id>", description: "Filter by contact id", field: "contactId" },
-      { option: "--email-subject <text>", description: "Filter by email subject", field: "emailSubject" },
-      { option: "--caller-number <text>", description: "Filter by caller number", field: "callerNumber" },
-      ...dateRangeFilter("dateCreated", "created"),
-      ...dateRangeFilter("dateCompleted", "completed"),
-    ],
-  }),
+  {
+    ...v3Entity("completed-form", "completed-forms", "/completed-forms", {
+      readOnly: true,
+      listFilters: [
+        { option: "--name <text>", description: "Filter by form name", field: "name" },
+        { option: "--form-id <id>", description: "Filter by form id", field: "formId" },
+        { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+        { option: "--contact-id <id>", description: "Filter by contact id", field: "contactId" },
+        { option: "--email-subject <text>", description: "Filter by email subject", field: "emailSubject" },
+        { option: "--caller-number <text>", description: "Filter by caller number", field: "callerNumber" },
+        ...dateRangeFilter("dateCreated", "created"),
+        ...dateRangeFilter("dateCompleted", "completed"),
+      ],
+    }),
+    v2: {
+      // v2 list POST /forms/completed. No single-get route (no idFilterField) → v2 get exits 9.
+      // Stays readOnly (the v2-only `mark-read` action rides a companion subcommand, not patch).
+      list: {
+        route: "/forms/completed",
+        filters: [
+          { option: "--start-date <date>", description: "Window start date", field: "StartDate" },
+          { option: "--end-date <date>", description: "Window end date", field: "EndDate" },
+          { option: "--client-id <id>", description: "Filter by client id", field: "ClientId" },
+          { option: "--form-id <id>", description: "Filter by a specific form id (returns a single result)", field: "SpecificFormId" },
+        ],
+      },
+    },
+  },
   v3Entity("webhook-call", "webhook-calls", "/webhookcalls", {
     readOnly: true,
     listFilters: [

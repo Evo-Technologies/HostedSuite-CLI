@@ -3,12 +3,20 @@ import { Command } from "commander";
 import { addAiSettingsCommands } from "./commands/ai-settings.js";
 import { buildApiCommand } from "./commands/api.js";
 import { buildAuthCommand, buildWhoamiCommand } from "./commands/auth.js";
+import { buildAvailabilityCommand } from "./commands/availability.js";
 import { addBulkCommands } from "./commands/bulk.js";
+import { buildCallAllowanceCommand } from "./commands/call-allowance.js";
+import { addCompletedFormExtras } from "./commands/completed-form.js";
 import { buildConfirmCommand } from "./commands/confirm.js";
+import { buildDialingRuleCommand } from "./commands/dialing-rule.js";
 import { buildEntityCommand } from "./commands/entity.js";
 import { buildFileCommand } from "./commands/file.js";
+import { buildMeetingRoomResourcesCommand } from "./commands/meeting-room-resources.js";
+import { buildMyContactsCommand } from "./commands/my-contacts.js";
+import { buildRemotePhonesCommand } from "./commands/remote-phones.js";
 import { buildReportCommand } from "./commands/report.js";
 import { buildTenantCommand } from "./commands/tenant.js";
+import { buildTimeZonesCommand } from "./commands/time-zones.js";
 import { ENTITIES } from "./entities.js";
 import { CliError, EXIT, EXIT_DESCRIPTIONS } from "./exit-codes.js";
 import { addGlobalFlags, normalizeAliases } from "./global-flags.js";
@@ -46,10 +54,19 @@ function buildProgram(): Command {
   program.addCommand(buildApiCommand());     // raw escape hatch: hs api <method> <path>
   program.addCommand(buildReportCommand());  // report list | run <name>
   program.addCommand(buildFileCommand());    // file get | upload
+  // v2-only + v2/v3-parity DATA/CONFIG one-offs and groups (no live telephony).
+  program.addCommand(buildCallAllowanceCommand());        // call-allowance (v2 read; v3 → report)
+  program.addCommand(buildDialingRuleCommand());          // dialing-rule list|create|update
+  program.addCommand(buildTimeZonesCommand());            // time-zones (v2 + v3)
+  program.addCommand(buildRemotePhonesCommand());         // remote-phones (v2 only)
+  program.addCommand(buildAvailabilityCommand());         // availability room|resource (v2 only)
+  program.addCommand(buildMeetingRoomResourcesCommand()); // meeting-room-resources (v2 only)
+  program.addCommand(buildMyContactsCommand());           // my-contacts (v2 only)
   for (const def of ENTITIES) {
     const cmd = buildEntityCommand(def);       // <entity> list|get|create|patch|delete
     addBulkCommands(cmd, def);                 // + bulk-patch|bulk-archive|bulk-restore (writable only)
     if (def.noun === "client") addAiSettingsCommands(cmd); // + ai-settings get|set, prompt-lint
+    if (def.noun === "completed-form") addCompletedFormExtras(cmd); // + mark-read (v2 only)
     program.addCommand(cmd);
   }
   // ------------------------------------------------------------------------
