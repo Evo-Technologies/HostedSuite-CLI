@@ -10,34 +10,171 @@ import { emit, printBanner, type GlobalFlags } from "../output.js";
 import { parseTimeout, resolveActive } from "./entity.js";
 
 /**
- * A small, HONEST subset of the ~39 `/reports/*` routes (all GET, v3-only). The
- * full list is enumerated server-side (grep `[Route("/reports/` in the server's
- * codegen) — do not treat this as exhaustive. `hs report run <name>` accepts ANY
- * route name, so unlisted reports still work; this table is just discovery help.
+ * The full set of `/reports/*` routes (all GET, v3-only), enumerated from the
+ * server's codegen (`[Route("/reports/`). Every `Run*Report`/`Run*Export` DTO also
+ * inherits a `Format` field (mapped by the CLI's `--format` flag), so it is not
+ * repeated in `params`. `hs report run <name>` accepts ANY route name, so even a
+ * route not listed here still works; this table is discovery help.
+ *
+ * `params` are the report-specific property names (case-insensitive on the wire);
+ * pass each with `--param Name=value`. Date windows are `DateRange`/`TimeRange`
+ * complex objects on most reports — consult the server DTO for their sub-fields.
  */
 interface ReportDef {
   name: string;
   description: string;
-  /** Illustrative params (case-insensitive on the wire); reports vary — pass with --param. */
+  /** Report-specific parameter names (case-insensitive on the wire); pass with --param. */
   params?: string[];
 }
 
+// Shared parameter cores, to keep the table readable.
+const CALL_CORE = [
+  "TimeRange",
+  "OnlyIncludeSpecifiedTimeOfDay",
+  "Type",
+  "Centers",
+  "Clients",
+  "RoundCalls",
+  "MinCallDurationInSeconds",
+  "MaxCallDurationInSeconds",
+  "Categories",
+  "CallDispositions",
+  "BillableTime",
+];
+const SCHEDULING_CORE = [
+  "DateRange",
+  "ClientsAtCenter",
+  "RoomsAtCenter",
+  "Client",
+  "ShowOnlyBillableReservations",
+  "ShowOnlyReservationsWithNotes",
+  "ShowOnlyReservationsWithAdminNotes",
+  "Status",
+];
+const CHARGE_CORE = [
+  "DateRange",
+  "Center",
+  "ChargeSources",
+  "Client",
+  "SpecificServices",
+  "RoundCalls",
+  "BillableTime",
+  "MinCallDurationInSeconds",
+  "ShowEmptyCharges",
+];
+
 const REPORTS: ReportDef[] = [
+  { name: "booking-dates-report", description: "Booking dates report", params: SCHEDULING_CORE },
   {
-    name: "client-excel-report",
-    description: "Per-client export (xlsx).",
-    params: ["from", "to", "centerId"],
-  },
-  {
-    name: "quick-books-excel-export",
-    description: "QuickBooks billing export (xlsx).",
-    params: ["from", "to"],
+    name: "meeting-room-day-sheet-report",
+    description: "Meeting room day sheet report",
+    params: ["Date", "Center", "ShowCompanyNamesOnReservations", "Interval", "StartTime", "EndTime"],
   },
   {
     name: "utilization-report",
-    description: "Resource/room utilization over a window.",
-    params: ["from", "to", "centerId"],
+    description: "Utilization report",
+    params: ["DateRange", "StartTime", "EndTime", "Centers", "ExcludeClients", "IncludeRoomOccupancy", "IncludeWeekends"],
   },
+  { name: "sign-in-sheet-report", description: "Sign-in sheet report", params: SCHEDULING_CORE },
+  { name: "day-sheet-report", description: "Day sheet report", params: SCHEDULING_CORE },
+  { name: "scheduling-history-report", description: "Scheduling history report", params: SCHEDULING_CORE },
+  { name: "scheduling-billing-report", description: "Scheduling billing report", params: SCHEDULING_CORE },
+  {
+    name: "call-allowance-report-by-day",
+    description: "Call allowance report by day",
+    params: [...CALL_CORE, "IncludeArchivedClients", "RemoveBalanceColumns", "AllowanceType"],
+  },
+  {
+    name: "call-allowance-report-v-1",
+    description: "Call allowance report v1",
+    params: [
+      "TimeRange",
+      "OnlyIncludeSpecifiedTimeOfDay",
+      "Type",
+      "Centers",
+      "Client",
+      "RoundCalls",
+      "MinCallDurationInSeconds",
+      "MaxCallDurationInSeconds",
+      "Categories",
+      "BillableTime",
+      "IncludeArchivedClients",
+    ],
+  },
+  { name: "call-insights-report", description: "Call insights report", params: [...CALL_CORE, "Insight", "Grouping"] },
+  { name: "weekly-call-breakdown-report", description: "Weekly call breakdown report", params: CALL_CORE },
+  { name: "call-transfer-report", description: "Call transfer report", params: CALL_CORE },
+  { name: "call-count-by-screen-pop-report", description: "Call count by screen pop report", params: CALL_CORE },
+  { name: "monthly-call-breakdown-report", description: "Monthly call breakdown report", params: CALL_CORE },
+  { name: "hourly-call-volume-report", description: "Hourly call volume report", params: CALL_CORE },
+  {
+    name: "outbound-cdr-report",
+    description: "Outbound CDR report",
+    params: ["TimeRange", "Center", "Client", "SortBy", "IncludeRawCdrs", "ShowEachCall", "OnlyIncludeBillableCalls"],
+  },
+  {
+    name: "hourly-call-breakdown-report",
+    description: "Hourly call breakdown report",
+    params: [...CALL_CORE, "HideClientInformation"],
+  },
+  {
+    name: "missed-call-report",
+    description: "Missed call report",
+    params: ["TimeRange", "OnlyIncludeSpecifiedTimeOfDay", "Center", "Categories", "Client", "MinRingTimeInSeconds"],
+  },
+  {
+    name: "operator-transfer-cdr-report",
+    description: "Operator transfer CDR report",
+    params: ["TimeRange", "Center", "Client", "SortBy", "IncludeRawCdrs", "ShowEachCall", "OnlyIncludeBillableCalls"],
+  },
+  {
+    name: "center-call-breakdown-report",
+    description: "Center call breakdown report",
+    params: [...CALL_CORE, "DoNotIncludeClientBreakdowns"],
+  },
+  { name: "call-notes-report", description: "Call notes report", params: CALL_CORE },
+  {
+    name: "call-allowance-report",
+    description: "Call allowance report",
+    params: [...CALL_CORE, "IncludeArchivedClients", "RemoveBalanceColumns", "AllowanceType"],
+  },
+  {
+    name: "client-call-breakdown-report",
+    description: "Client call breakdown report",
+    params: [...CALL_CORE, "IncludeCallDetail", "IncludeCallNotes", "IncludeCallDisposition", "TimeSpanFormat"],
+  },
+  {
+    name: "operator-statistics-report",
+    description: "Operator statistics report",
+    params: [...CALL_CORE, "GroupBy", "CountBy", "IncludeMissedCallInformation", "MinRingTimeInSecondsForMissedCalls"],
+  },
+  { name: "lead-excel-report", description: "Lead excel report", params: ["Center"] },
+  { name: "completed-forms-excel-report", description: "Completed forms excel report", params: ["TimeRange", "Client", "Center"] },
+  { name: "completed-forms-report", description: "Completed forms report", params: ["TimeRange", "Client", "Center"] },
+  { name: "client-excel-report", description: "Client excel report", params: ["Center"] },
+  { name: "client-gain-loss-report", description: "Client gain/loss report", params: ["TimeRange", "Center"] },
+  { name: "screen-pops-report", description: "Screen pops report", params: ["Center", "ShowIdsInsteadOfNames"] },
+  { name: "custom-fields-report", description: "Custom fields report", params: ["Center"] },
+  { name: "client-report", description: "Client report", params: ["Center"] },
+  {
+    name: "client-spreadsheet-report",
+    description: "Client spreadsheet report",
+    params: ["Center", "DisplayMode", "OnlyShowContactsWithLogins", "ShowLoginPassword"],
+  },
+  { name: "charge-details-export", description: "Charge details export", params: CHARGE_CORE },
+  {
+    name: "manual-charges-report",
+    description: "Manual charges report",
+    params: ["DateRange", "Center", "Client", "SpecificServices", "GroupChargeTotals"],
+  },
+  {
+    name: "quick-books-excel-export",
+    description: "QuickBooks excel export",
+    params: ["DateRange", "InvoiceDate", "ChargeSources", "BillableCallTime", "IncludeZeroChargeLineItems", "LineItemMode"],
+  },
+  { name: "contracts-excel-export", description: "Contracts excel export (no parameters beyond --format)", params: [] },
+  { name: "charge-summary-report", description: "Charge summary report", params: CHARGE_CORE },
+  { name: "appointment-counts-by-user-report", description: "Appointment counts by user report", params: ["DateRange"] },
 ];
 
 const FORMATS = new Set(["xlsx", "pdf", "json"]);
@@ -65,11 +202,14 @@ export function buildReportCommand(): Command {
   const root = new Command("report").description("List and run HostedSuite reports (v3 /reports/* — GET-only exports).");
 
   addGlobalFlags(root.command("list"))
-    .description("List known report routes (a representative subset — not exhaustive).")
+    .description("List all known /reports/* routes (GET-only, v3 tenants).")
     .addHelpText("after", "\nExample:\n  hs report list --plain\n")
     .action((_opts, command: Command) => {
       const globals = command.optsWithGlobals<GlobalFlags>();
-      emit({ items: REPORTS, note: "Representative subset; `hs report run <name>` accepts any /reports/* route." }, globals);
+      emit(
+        { items: REPORTS, note: "`hs report run <name>` accepts any /reports/* route; --format sets the DTO Format field." },
+        globals,
+      );
     });
 
   addGlobalFlags(root.command("run"))

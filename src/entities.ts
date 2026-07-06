@@ -37,6 +37,11 @@ export interface EntityV3 {
   readOnly?: boolean;
   /** Singleton (system-settings): only `get` (no id) + `patch` (no id). */
   singleton?: boolean;
+  /**
+   * Cap on the `--from`/`--to` list window (in days), enforced CLIENT-SIDE before
+   * the request. Scheduling entities (reservation/appointment) cap at 7 days.
+   */
+  maxListWindowDays?: number;
   /** Per-FileReference upload routes (image/* only) — wired in a later phase. */
   files?: { field: string; route: string }[];
 }
@@ -51,8 +56,14 @@ export interface EntityV2 {
     /** v2-specific filter flags. */
     filters?: FlagDef[];
   };
-  /** v2 has no single-get routes; emulate via list + idFilterField. */
+  /** Most v2 nouns have no single-get route; emulate via list + idFilterField. */
   get?: "via-list";
+  /**
+   * A dedicated v2 single-get route (POST `{ [idField]: id }`), used when a noun
+   * exposes a real get endpoint distinct from its list route (e.g. reservations,
+   * meeting-rooms). Takes precedence over `get: "via-list"`.
+   */
+  getOne?: { route: string; idField: string };
   create?: { route: string; fieldMap: Record<string, string> };
   update?: { route: string; idField: string; fieldMap: Record<string, string> };
   archive?: { route: string; idField: string };
@@ -145,6 +156,64 @@ const CONTACT_V2_UPDATE: Record<string, string> = {
   timeZoneId: "TimeZoneId",
 };
 
+const CENTER_V2_CREATE: Record<string, string> = {
+  name: "Name",
+  thirdPartyAccountId: "ThirdPartyAccountId",
+  address: "Address",
+};
+
+const CENTER_V2_UPDATE: Record<string, string> = {
+  // v2 update selects the center by Id and renames via `NewName`.
+  name: "NewName",
+  address: "Address",
+};
+
+const CHARGE_V2_CREATE: Record<string, string> = {
+  clientId: "ClientId",
+  serviceId: "ServiceId",
+  dateOfCharge: "DateOfCharge",
+  notes: "Notes",
+  quantity: "Quantity",
+  cost: "Cost",
+  memorized: "Memorized",
+};
+
+const INDUSTRY_V2_CREATE: Record<string, string> = {
+  name: "Name",
+  centerId: "CenterId",
+};
+
+const INDUSTRY_V2_UPDATE: Record<string, string> = {
+  name: "Name",
+};
+
+const RESERVATION_V2_CREATE: Record<string, string> = {
+  meetingRoomId: "MeetingRoomId",
+  startTime: "StartTime",
+  endTime: "EndTime",
+  subject: "Subject",
+  notes: "Notes",
+  attendees: "Attendees",
+  organizerName: "OrganizerName",
+  resourceIds: "ResourceIds",
+  numAttendees: "NumAttendees",
+  clientId: "ClientId",
+  clientEmailAddress: "ClientEmailAddress",
+  paymentStatus: "PaymentStatus",
+};
+
+const RESERVATION_V2_UPDATE: Record<string, string> = {
+  // Full reschedule via /scheduling/reschedule (RescheduleReservationRequest).
+  meetingRoomId: "MeetingRoomId",
+  startTime: "StartTime",
+  endTime: "EndTime",
+  subject: "Subject",
+  notes: "Notes",
+  attendees: "Attendees",
+  organizerName: "OrganizerName",
+  numAttendees: "NumAttendees",
+};
+
 // ---------------------------------------------------------------------------
 // v3-only entity helpers
 // ---------------------------------------------------------------------------
@@ -230,36 +299,124 @@ export const ENTITIES: EntityDef[] = [
     },
   },
 
-  // --- operational entities (v3 only for now) ------------------------------
-  v3Entity("center", "centers", "/centers"),
-  v3Entity("charge", "charges", "/charges", {
-    listFilters: [
-      { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
-    ],
-  }),
-  v3Entity("service", "services", "/services"),
-  v3Entity("industry", "industries", "/industries"),
+  // --- operational entities (v3 + v2 where mapped) -------------------------
+  {
+    ...v3Entity("center", "centers", "/centers"),
+    v2: {
+      list: {
+        route: "/centers",
+        queryField: "Name",
+        filters: [{ option: "--name <text>", description: "Filter by center name", field: "Name" }],
+      },
+      // No dedicated get route on v2 and no Id filter on list → `get` exits 9.
+      create: { route: "/centers/save", fieldMap: CENTER_V2_CREATE },
+      update: { route: "/centers/update", idField: "Id", fieldMap: CENTER_V2_UPDATE },
+      hardDelete: { route: "/centers/delete", idField: "Id" },
+    },
+  },
+  {
+    ...v3Entity("charge", "charges", "/charges", {
+      listFilters: [
+        { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
+      ],
+    }),
+    v2: {
+      // v2 exposes two list variants (/charges, /charges/all); the CLI wires the
+      // primary /charges route. No update/delete/get routes exist for charges.
+      list: {
+        route: "/charges",
+        filters: [
+          { option: "--client-id <id>", description: "Filter by client id", field: "ClientId" },
+          { option: "--start-date <date>", description: "Window start date", field: "StartDate" },
+          { option: "--end-date <date>", description: "Window end date", field: "EndDate" },
+          { option: "--date-selector <sel>", description: "Date selector mode", field: "DateSelector" },
+        ],
+      },
+      create: { route: "/charges/new", fieldMap: CHARGE_V2_CREATE },
+    },
+  },
+  {
+    ...v3Entity("service", "services", "/services"),
+    v2: {
+      // v2 supports ONLY list for services.
+      list: {
+        route: "/services",
+        queryField: "Name",
+        filters: [
+          { option: "--center-id <id>", description: "Filter by center id", field: "CenterId" },
+          { option: "--parent-service-id <id>", description: "Filter by parent service id", field: "ParentServiceId" },
+        ],
+      },
+    },
+  },
+  {
+    ...v3Entity("industry", "industries", "/industries"),
+    v2: {
+      list: { route: "/industries" },
+      create: { route: "/industries/save", fieldMap: INDUSTRY_V2_CREATE },
+      update: { route: "/industries/update", idField: "IndustryId", fieldMap: INDUSTRY_V2_UPDATE },
+      hardDelete: { route: "/industries/delete", idField: "IndustryId" },
+    },
+  },
   v3Entity("category", "categories", "/categories"),
   v3Entity("department", "departments", "/departments"),
   v3Entity("calendar", "calendars", "/calendars"),
   v3Entity("contract", "contracts", "/contracts"),
-  v3Entity("meeting-room", "meeting-rooms", "/meeting-rooms"),
+  {
+    ...v3Entity("meeting-room", "meeting-rooms", "/meeting-rooms"),
+    v2: {
+      // v2 supports list + a dedicated single-get; no create/update/delete.
+      list: {
+        route: "/scheduling/meeting-rooms",
+        filters: [{ option: "--center-id <id>", description: "Filter by center id", field: "CenterId" }],
+      },
+      getOne: { route: "/scheduling/meeting-room", idField: "Id" },
+    },
+  },
   v3Entity("resource", "resources", "/scheduled-resources"),
 
-  // Scheduling: body-id PATCH (API-NOTES §4). The ≤7-day list window guard lands
-  // with the Phase-2 scheduling work; the registry only records the patch style.
-  v3Entity("reservation", "reservations", "/reservations", {
-    patchStyle: "body-id",
-    listFilters: [
-      { option: "--from <date>", description: "Window start (ISO date; server enforces ≤7 days)", field: "from" },
-      { option: "--to <date>", description: "Window end (ISO date; server enforces ≤7 days)", field: "to" },
-    ],
-  }),
+  // Scheduling: body-id PATCH (API-NOTES §4) + a CLIENT-SIDE ≤7-day list window
+  // guard (maxListWindowDays) enforced before the request.
+  {
+    ...v3Entity("reservation", "reservations", "/reservations", {
+      patchStyle: "body-id",
+      maxListWindowDays: 7,
+      listFilters: [
+        { option: "--from <date>", description: "Window start (ISO date; ≤7-day span)", field: "from" },
+        { option: "--to <date>", description: "Window end (ISO date; ≤7-day span)", field: "to" },
+      ],
+    }),
+    v2: {
+      list: {
+        route: "/scheduling/reservations",
+        filters: [
+          { option: "--meeting-room-id <id>", description: "Filter by meeting room id (repeatable)", field: "MeetingRoomIds", repeatable: true },
+          { option: "--center-id <id>", description: "Filter by center id", field: "CenterId" },
+          { option: "--client-id <id>", description: "Filter by client id", field: "ClientId" },
+          { option: "--start-time <ts>", description: "Window start time", field: "StartTime" },
+          { option: "--end-time <ts>", description: "Window end time", field: "EndTime" },
+          { option: "--status <status>", description: "Filter by reservation status", field: "Status" },
+          { option: "--payment-status <status>", description: "Filter by payment status", field: "PaymentStatus" },
+          { option: "--last-modified-after <ts>", description: "Modified after", field: "LastModifiedAfter" },
+          { option: "--last-modified-before <ts>", description: "Modified before", field: "LastModifiedBefore" },
+        ],
+      },
+      getOne: { route: "/scheduling/reservations/details", idField: "Id" },
+      create: { route: "/scheduling/schedule", fieldMap: RESERVATION_V2_CREATE },
+      // Full reschedule; /scheduling/update-payment-status is a narrower update not
+      // expressible in the single update slot and is omitted.
+      update: { route: "/scheduling/reschedule", idField: "ReservationId", fieldMap: RESERVATION_V2_UPDATE },
+      // `delete` (default) cancels via /scheduling/cancel; `--hard` truly deletes.
+      archive: { route: "/scheduling/cancel", idField: "ReservationId" },
+      hardDelete: { route: "/scheduling/reservations/delete", idField: "Id" },
+    },
+  },
   v3Entity("appointment", "appointments", "/appointments", {
     patchStyle: "body-id",
+    maxListWindowDays: 7,
     listFilters: [
-      { option: "--from <date>", description: "Window start (ISO date; server enforces ≤7 days)", field: "from" },
-      { option: "--to <date>", description: "Window end (ISO date; server enforces ≤7 days)", field: "to" },
+      { option: "--from <date>", description: "Window start (ISO date; ≤7-day span)", field: "from" },
+      { option: "--to <date>", description: "Window end (ISO date; ≤7-day span)", field: "to" },
     ],
   }),
 

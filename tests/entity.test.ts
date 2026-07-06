@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildEntityCommand,
+  checkListWindow,
   computeDiff,
   filterBody,
   filterQuery,
@@ -32,6 +33,8 @@ function resolved(apiVersion: "v2" | "v3" = "v2"): ResolvedTenant {
 }
 
 const client = findEntity("client")!;
+const center = findEntity("center")!;
+const reservation = findEntity("reservation")!;
 
 describe("list filter flag → query mapping (filterQuery, v3)", () => {
   it("maps each declared filter's opt key onto its v3 query field", () => {
@@ -69,6 +72,51 @@ describe("translateBody (v3 camelCase → v2 field names)", () => {
     expect(() => translateBody({ bogus: "x" }, client.v2!.create!.fieldMap, resolved())).toThrowError(
       expect.objectContaining({ code: EXIT.USAGE, message: expect.stringContaining('Field "bogus" has no v2 mapping') }),
     );
+  });
+});
+
+describe("new v2 entity field-maps (center)", () => {
+  it("translates the center create fieldMap (name → Name)", () => {
+    const out = translateBody(
+      { name: "Downtown", thirdPartyAccountId: "tp-1", address: "1 Main St" },
+      center.v2!.create!.fieldMap,
+      resolved(),
+    );
+    expect(out).toEqual({ Name: "Downtown", ThirdPartyAccountId: "tp-1", Address: "1 Main St" });
+  });
+
+  it("uses the bespoke New* name on center update (name → NewName)", () => {
+    const out = translateBody({ name: "Renamed", address: "2 Elm St" }, center.v2!.update!.fieldMap, resolved());
+    expect(out).toEqual({ NewName: "Renamed", Address: "2 Elm St" });
+  });
+
+  it("throws EXIT.USAGE for an unmapped field on a new v2 entity", () => {
+    expect(() => translateBody({ bogus: "x" }, center.v2!.create!.fieldMap, resolved())).toThrowError(
+      expect.objectContaining({ code: EXIT.USAGE, message: expect.stringContaining('Field "bogus" has no v2 mapping') }),
+    );
+  });
+});
+
+describe("checkListWindow — client-side ≤7-day guard", () => {
+  it("throws EXIT.USAGE for an 8-day reservation span", () => {
+    expect(() => checkListWindow(reservation, { from: "2026-01-01", to: "2026-01-09" })).toThrowError(
+      expect.objectContaining({
+        code: EXIT.USAGE,
+        message: expect.stringContaining("reservation list is limited to a 7-day window; got 8 days"),
+      }),
+    );
+  });
+
+  it("allows a 7-day span", () => {
+    expect(() => checkListWindow(reservation, { from: "2026-01-01", to: "2026-01-08" })).not.toThrow();
+  });
+
+  it("is a no-op when only one bound is supplied", () => {
+    expect(() => checkListWindow(reservation, { from: "2026-01-01" })).not.toThrow();
+  });
+
+  it("is a no-op for an entity without a window cap", () => {
+    expect(() => checkListWindow(client, { from: "2026-01-01", to: "2026-12-31" })).not.toThrow();
   });
 });
 
@@ -123,10 +171,10 @@ describe("end-to-end: a v3-only entity on a v2 tenant exits 9", () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it("`center list` on a v2 tenant rejects with EXIT.NOT_IMPLEMENTED", async () => {
-    // `center` is registered v3-only (no v2 surface).
-    const center = buildEntityCommand(findEntity("center")!);
-    await expect(center.parseAsync(["list"], { from: "user" })).rejects.toMatchObject({
+  it("`category list` on a v2 tenant rejects with EXIT.NOT_IMPLEMENTED", async () => {
+    // `category` is registered v3-only (no v2 surface).
+    const category = buildEntityCommand(findEntity("category")!);
+    await expect(category.parseAsync(["list"], { from: "user" })).rejects.toMatchObject({
       code: EXIT.NOT_IMPLEMENTED,
     });
   });

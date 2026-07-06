@@ -184,6 +184,9 @@ function addList(root: Command, def: EntityDef): void {
     const { resolved } = resolveActive(globals);
     const { profile, alias } = resolved;
 
+    // CLIENT-SIDE ≤N-day window guard (reservation/appointment), before any API call.
+    checkListWindow(def, opts);
+
     if (profile.apiVersion === "v3") {
       if (!def.v3) notImplemented(`${def.noun} list`, resolved);
       await listV3(def.v3, opts, globals, profile, resolved);
@@ -192,6 +195,31 @@ function addList(root: Command, def: EntityDef): void {
     if (!def.v2) notImplemented(`${def.noun} list`, resolved);
     await listV2(def.v2, opts, globals, profile, resolved, alias);
   });
+}
+
+/**
+ * Enforce an entity's `maxListWindowDays` cap CLIENT-SIDE. When both a start and
+ * an end bound are supplied (v3 `--from`/`--to`, or v2 `--start-time`/`--end-time`)
+ * and their span exceeds the cap, exit USAGE before touching the network. Malformed
+ * or single-sided dates fall through to the server for validation.
+ */
+export function checkListWindow(def: EntityDef, opts: ListOpts): void {
+  const max = def.v3?.maxListWindowDays;
+  if (!max) return;
+  const from = (opts.from ?? opts.startTime) as string | undefined;
+  const to = (opts.to ?? opts.endTime) as string | undefined;
+  if (typeof from !== "string" || typeof to !== "string") return;
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) return;
+  const days = (toMs - fromMs) / 86_400_000;
+  if (days > max) {
+    const shown = Number.isInteger(days) ? String(days) : days.toFixed(1);
+    throw new CliError(
+      EXIT.USAGE,
+      `${def.noun} list is limited to a ${max}-day window; got ${shown} days.`,
+    );
+  }
 }
 
 async function listV3(
@@ -323,8 +351,21 @@ function addGet(root: Command, def: EntityDef): void {
         return;
       }
 
-      // v2: emulate get via the list route filtered by idFilterField.
       const v2 = def.v2;
+
+      // v2: a dedicated single-get route (POST { [idField]: id }) when one exists.
+      if (v2?.getOne) {
+        const body = { [v2.getOne.idField]: id };
+        if (globals.dryRun) {
+          emit(planned("POST", v2.getOne.route, undefined, body, resolved), globals);
+          return;
+        }
+        printBanner(resolved, globals);
+        emit(await sendNormalized(profile, { method: "POST", path: v2.getOne.route, body }, globals), globals);
+        return;
+      }
+
+      // v2: otherwise emulate get via the list route filtered by idFilterField.
       if (!v2 || v2.get !== "via-list" || !v2.list.idFilterField) notImplemented(`${def.noun} get`, resolved);
       const body = { [v2.list.idFilterField]: id };
       if (globals.dryRun) {
