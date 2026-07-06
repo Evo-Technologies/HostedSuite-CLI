@@ -63,7 +63,7 @@ hs tenant probe [alias]
   becomes the active tenant automatically.
 - `use <alias>` switches the active tenant and re-stamps `tenantChangedAt` (this is what feeds the
   recent-switch guard — see SKILL.md).
-- `show [alias]` (default: active) and `list` both redact the password to `"***"`.
+- `show [alias]` (default: active) redacts the password to `"***"`; `list` omits the password field entirely.
 - `remove <alias>` deletes the profile; clears `activeTenant`/`lastWriteTenant` if either pointed at it.
 - `probe [alias]` (default: active) re-runs version detection and persists the result. Requires a
   resolvable password (flag/env/profile) — fails with exit 4 otherwise.
@@ -452,8 +452,8 @@ verb exits 9 on a v2 tenant.
 | `contract` | `/contracts` | — | |
 | `meeting-room` | `/meeting-rooms` | list + dedicated get | no v2 create/update/delete |
 | `resource` | `/scheduled-resources` | — | |
-| `reservation` | `/reservations` | yes (list/get/create/update/archive/hard-delete; no restore) | body-id PATCH; server enforces ≤7-day list window (not yet client-validated); v2 update is a full reschedule |
-| `appointment` | `/appointments` | — | body-id PATCH; same 7-day note |
+| `reservation` | `/reservations` | yes (list/get/create/update/archive/hard-delete; no restore) | body-id PATCH; `list` ≤7-day window, pre-validated client-side (exit 2 before any call); v2 update is a full reschedule |
+| `appointment` | `/appointments` | — | body-id PATCH; same client-side ≤7-day `list` guard |
 | `lead` | `/leads` | — | |
 | `lead-source` | `/lead-source` | — | |
 | `lead-stage` | `/lead-stages` | — | |
@@ -522,8 +522,7 @@ command factory. `tenant`, `config`, `whoami`/`auth`, `confirm`, `history`/`undo
 (`call-allowance`, `dialing-rule`, `time-zones`, `remote-phones`, `availability`,
 `meeting-room-resources`, `my-contacts`), `schema`, `exit-codes` are all implemented. What's *not*
 built: per-entity v2 write support beyond `client`/`contact`/`center`/`industry`/`reservation`/
-`reception-call` (and even those are partial — see the entity registry); client-side ≤7-day
-pre-validation for reservation/appointment windows; `--concurrency` on `confirm` (currently always
+`reception-call` (and even those are partial — see the entity registry); `--concurrency` on `confirm` (currently always
 serial); AI plans/usage/onboarding (explicitly out of scope); any AI-session apply/discard/changes-review
 command (explicitly out of scope — legacy MCP system, not used by this CLI).
 

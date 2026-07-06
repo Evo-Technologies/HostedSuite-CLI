@@ -251,9 +251,10 @@ line (it shows the value being detached, e.g. the center name) before applying i
 
 Reservations and appointments PATCH by **body id**, not path id (`{"id": "...", ...}` in the body,
 not `/reservations/{id}`) — the CLI handles this transparently; you never need to think about it.
-The server also enforces a ≤7-day window on their `list`/bulk-selector date ranges — the CLI does not
-currently pre-validate this client-side, so an over-wide `--from`/`--to` fails server-side; narrow it
-yourself if you hit that error.
+Their `list` also has a ≤7-day date-window limit, and the CLI **pre-validates it client-side**: an
+over-wide `--from`/`--to` fails fast with exit 2 (`... is limited to a 7-day window; got N days.`)
+before any network call — narrow the window and retry. (The guard is on `list` only; bulk-selector
+resolution does not apply it.)
 
 ## Bulk updates
 
@@ -338,12 +339,14 @@ command and none should be invented.
 
 ```bash
 hs report list                     # a representative subset; run <name> accepts ANY /reports/* route
-hs report run client-excel-report --param from=2026-01-01 --param to=2026-06-30 \
-  --format xlsx --out /tmp/report.xlsx
-hs report run utilization-report --format json     # json prints inline (or --out)
+hs report run client-excel-report --param Center=<centerId> --format xlsx --out /tmp/report.xlsx
+hs report run charge-summary-report --param DateRange.Start=2026-01-01 --param DateRange.End=2026-06-30 --format json
 ```
 
-v3 only. Binary formats (`xlsx`/`pdf`) require `--out`. Report endpoints are concurrency-capped
+v3 only. Binary formats (`xlsx`/`pdf`) require `--out`. **Date windows are complex props — pass the
+sub-fields with a dotted key** (`--param DateRange.Start=… --param DateRange.End=…`, or
+`TimeRange.Start/End`); there is **no `from=`/`to=` param**. Params are report-specific — run
+`hs report run <name> --help` for a report's actual parameters. Report endpoints are concurrency-capped
 server-side — run them serially, don't fan out several `report run` calls in parallel.
 
 ## Troubleshooting
@@ -358,7 +361,7 @@ server-side — run them serially, don't fan out several `report run` calls in p
 | `hs confirm --tenant x` | Usage error — confirm never takes `--tenant`; drop the flag. |
 | `jq '.[]'` returns nothing on `list` | Use `jq '.items[]'` — lists are always wrapped. |
 | exit 3 `EMPTY` on a `list` | 0 matching records — not an error; narrow or accept the empty set. |
-| Reservation/appointment list fails oddly | Check the date window — server caps it at 7 days. |
+| Reservation/appointment list exits 2 "limited to a 7-day window" | The `--from`/`--to` span exceeds 7 days — narrow it (the CLI checks this before calling the API). |
 | `NOTE: ... different tenant than your last write` | Re-verify the tenant with the user before writing. |
 | Unmapped field on v2 write, exit 2 | That field has no v2 translation for this entity — use only mapped fields. |
 | `"***"` in output where a value should be | Working as intended — credential redaction, not a bug. |
@@ -369,7 +372,7 @@ server-side — run them serially, don't fan out several `report run` calls in p
 hs schema --json                 # full command tree
 hs schema client patch --json    # one subtree
 hs exit-codes --json             # exit-code map
-hs <noun> <verb> --help          # flags + example + Safety: section, always present
+hs <noun> <verb> --help          # flags + example; write verbs (create/patch/delete/bulk-*/upload) also print a Safety: section
 ```
 
 ## Exit codes
