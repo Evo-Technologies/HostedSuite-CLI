@@ -27,7 +27,14 @@ function buildProgram(): Command {
         "Reads run freely; bulk writes are two-phase (exit 11 → `hs confirm <token>`). Every tenant is production.",
     )
     .version(VERSION)
+    .enablePositionalOptions()   // let global flags appear before the subcommand: `hs --tenant x client list`
     .showHelpAfterError();
+
+  // Global flags are declared on every leaf (so `hs client list --tenant x` works) AND on the
+  // root (so the natural prefix form `hs --tenant x client list` works too). Commander's
+  // optsWithGlobals() on the leaf merges the root's values, and an unset leaf flag never
+  // clobbers a root-provided one (unset options are absent from the option bag).
+  addGlobalFlags(program);
 
   program.hook("preAction", normalizeAliases);
 

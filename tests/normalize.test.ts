@@ -47,14 +47,14 @@ describe("normalizeResponse — bare array → { items }", () => {
 });
 
 describe("credential redaction", () => {
-  it("redacts password/userName/authToken values case-insensitively", () => {
+  it("redacts password/authToken but NOT userName (a login id, not a secret)", () => {
     const out = redactCreds({
       userName: "mike",
       Password: "supersecret",
       AuthToken: "tok",
       keep: "visible",
     }) as Record<string, unknown>;
-    expect(out.userName).toBe("***");
+    expect(out.userName).toBe("mike");   // login identifier stays visible for whoami
     expect(out.Password).toBe("***");
     expect(out.AuthToken).toBe("***");
     expect(out.keep).toBe("visible");
@@ -67,13 +67,13 @@ describe("credential redaction", () => {
     }) as { list: Array<{ password: string }>; nested: { creds: Record<string, string> } };
     expect(out.list[0].password).toBe("***");
     expect(out.list[1].password).toBe("***");
-    expect(out.nested.creds.userName).toBe("***");
+    expect(out.nested.creds.userName).toBe("u");   // preserved
     expect(out.nested.creds.password).toBe("***");
   });
 
-  it("applies during v2 normalization after camelization (PascalCase creds are caught)", () => {
+  it("applies during v2 normalization after camelization (PascalCase password is caught, userName kept)", () => {
     const out = normalizeResponse({ UserName: "u", Password: "p", Name: "Acme" }, "v2") as Record<string, unknown>;
-    expect(out.userName).toBe("***");
+    expect(out.userName).toBe("u");
     expect(out.password).toBe("***");
     expect(out.name).toBe("Acme");
   });

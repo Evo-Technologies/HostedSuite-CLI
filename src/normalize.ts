@@ -1,12 +1,16 @@
 import type { ApiVersion } from "./config.js";
 
 /**
- * Field names that carry credentials and must never reach output. Matched
- * case-insensitively so both v3 camelCase (`password`, `userName`) and v2
- * PascalCase (`Password`, `UserName`) are caught. Values are replaced with
- * "***" rather than deleted, so the shape of the response is preserved.
+ * Field names that carry secrets and must never reach output. Matched
+ * case-insensitively so both v3 camelCase (`password`) and v2 PascalCase
+ * (`Password`) are caught. Values are replaced with "***" rather than deleted,
+ * so the shape of the response is preserved.
+ *
+ * NOTE: `userName` is deliberately NOT redacted — it is a login identifier
+ * (email), not a secret, and `hs whoami` must show it so the JSON is a usable
+ * source of truth for "who am I authenticated as". Only true secrets are masked.
  */
-const CRED_KEYS = new Set(["password", "username", "authtoken"]);
+const CRED_KEYS = new Set(["password", "authtoken", "apikey", "secret"]);
 
 const REDACTED = "***";
 
