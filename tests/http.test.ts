@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildUrl, request } from "../src/http.js";
+import { buildUrl, jsvEncode, request } from "../src/http.js";
 import { CliError, EXIT } from "../src/exit-codes.js";
 import type { TenantProfile } from "../src/config.js";
 
@@ -178,5 +178,31 @@ describe("error-body redaction", () => {
     expect(caught).toBeInstanceOf(CliError);
     expect(caught!.message).toContain("***");
     expect(caught!.message).not.toContain("s3cret");
+  });
+});
+
+describe("JSV query encoding (nested objects on GET)", () => {
+  it("encodes a nested object (DateRangeFilter) as JSV, never [object Object]", () => {
+    const url = buildUrl("https://h/api", "/clients", {
+      dateCreated: { start: "2020-01-01", end: "2020-06-30" },
+    });
+    // URLSearchParams percent-encodes { } : , — decode to assert the JSV shape.
+    const raw = url.split("?")[1];
+    expect(raw).toBe("dateCreated=%7Bstart%3A2020-01-01%2Cend%3A2020-06-30%7D");
+    expect(decodeURIComponent(raw)).toBe("dateCreated={start:2020-01-01,end:2020-06-30}");
+    expect(url).not.toContain("object%20Object");
+  });
+
+  it("keeps arrays as bare comma lists (ServiceStack accepts CSV)", () => {
+    const url = buildUrl("https://h/api", "/clients", { ids: ["a", "b", "c"] });
+    expect(decodeURIComponent(url.split("?")[1])).toBe("ids=a,b,c");
+  });
+
+  it("jsvEncode quotes only strings with JSV structural chars, doubling inner quotes", () => {
+    expect(jsvEncode({ start: "2020-01-01" })).toBe("{start:2020-01-01}");
+    expect(jsvEncode({ t: "07/05/2026 12:00 AM" })).toBe('{t:"07/05/2026 12:00 AM"}'); // has ':'
+    expect(jsvEncode('say "hi"')).toBe('"say ""hi"""'); // has '"'
+    expect(jsvEncode(["a", "b"])).toBe("[a,b]");
+    expect(jsvEncode("plain")).toBe("plain");
   });
 });

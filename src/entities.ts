@@ -17,11 +17,27 @@ export interface FlagDef {
   /**
    * The request field this flag maps to. In a v3 `listFilters` entry this is the
    * v3 camelCase query field (`centerId`); in a v2 `filters` entry it is the v2
-   * PascalCase field (`CenterId`).
+   * PascalCase field (`CenterId`). Ignored when `nest` is set.
    */
   field: string;
+  /**
+   * Nested-object target: this flag's value becomes `query[parent][key]` — the
+   * two flags of a date window (`--created-after`/`--created-before`) merge into
+   * one `DateRangeFilter` object (`dateCreated: { start, end }`) which the HTTP
+   * layer JSV-encodes. Server field names are case-insensitive, so lowercase
+   * `dateCreated`/`start`/`end` bind to C# `DateCreated`/`Start`/`End`.
+   */
+  nest?: { parent: string; key: string };
   /** Repeatable flag → collected into an array. */
   repeatable?: boolean;
+}
+
+/** A reusable date-range filter pair for a v3 `DateRangeFilter` property. */
+export function dateRangeFilter(parent: string, label: string): FlagDef[] {
+  return [
+    { option: `--${label}-after <date>`, description: `${parent} on/after this date (ISO)`, field: "", nest: { parent, key: "start" } },
+    { option: `--${label}-before <date>`, description: `${parent} on/before this date (ISO)`, field: "", nest: { parent, key: "end" } },
+  ];
 }
 
 export type PatchStyle = "path-id" | "body-id";
@@ -42,6 +58,12 @@ export interface EntityV3 {
    * the request. Scheduling entities (reservation/appointment) cap at 7 days.
    */
   maxListWindowDays?: number;
+  /**
+   * `"events"` for scheduling lists (reservation/appointment): the DTO base is
+   * `ListEvents<T>` — scalar `Start`/`End` params, a `{ events: [...] }` response
+   * envelope (no pagination), which the list handler unwraps to `{ items }`.
+   */
+  listStyle?: "events";
   /** Per-FileReference upload routes (image/* only) — wired in a later phase. */
   files?: { field: string; route: string }[];
 }
@@ -242,6 +264,7 @@ export const ENTITIES: EntityDef[] = [
       listFilters: [
         { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
         { option: "--category-id <id>", description: "Filter by category id (repeatable)", field: "categoryIds", repeatable: true },
+        ...dateRangeFilter("dateCreated", "created"),
       ],
     },
     v2: {
@@ -273,6 +296,7 @@ export const ENTITIES: EntityDef[] = [
       listFilters: [
         { option: "--client-id <id>", description: "Filter by client id", field: "clientId" },
         { option: "--center-id <id>", description: "Filter by center id", field: "centerId" },
+        ...dateRangeFilter("dateCreated", "created"),
       ],
     },
     v2: {
@@ -381,9 +405,12 @@ export const ENTITIES: EntityDef[] = [
     ...v3Entity("reservation", "reservations", "/reservations", {
       patchStyle: "body-id",
       maxListWindowDays: 7,
+      listStyle: "events",
       listFilters: [
-        { option: "--from <date>", description: "Window start (ISO date; ≤7-day span)", field: "from" },
-        { option: "--to <date>", description: "Window end (ISO date; ≤7-day span)", field: "to" },
+        // ListEvents<T> exposes scalar Start/End (NOT from/to, NOT a DateRangeFilter object).
+        { option: "--from <date>", description: "Window start (ISO date; ≤7-day span)", field: "start" },
+        { option: "--to <date>", description: "Window end (ISO date; ≤7-day span)", field: "end" },
+        { option: "--meeting-room-id <id>", description: "Filter by meeting room id (repeatable)", field: "meetingRoomIds", repeatable: true },
       ],
     }),
     v2: {
@@ -414,9 +441,10 @@ export const ENTITIES: EntityDef[] = [
   v3Entity("appointment", "appointments", "/appointments", {
     patchStyle: "body-id",
     maxListWindowDays: 7,
+    listStyle: "events",
     listFilters: [
-      { option: "--from <date>", description: "Window start (ISO date; ≤7-day span)", field: "from" },
-      { option: "--to <date>", description: "Window end (ISO date; ≤7-day span)", field: "to" },
+      { option: "--from <date>", description: "Window start (ISO date; ≤7-day span)", field: "start" },
+      { option: "--to <date>", description: "Window end (ISO date; ≤7-day span)", field: "end" },
     ],
   }),
 

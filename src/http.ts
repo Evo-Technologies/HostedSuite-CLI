@@ -5,7 +5,10 @@ import { redactCreds } from "./normalize.js";
 const VERSION = "0.1.0";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-export type Query = Record<string, string | number | boolean | string[] | undefined>;
+export type QueryPrimitive = string | number | boolean;
+/** A query value may nest: ServiceStack binds complex properties from JSV on the query string. */
+export type QueryValue = QueryPrimitive | null | QueryValue[] | { [k: string]: QueryValue };
+export type Query = Record<string, QueryValue | undefined>;
 
 export interface RequestSpec {
   method: string;
@@ -44,11 +47,42 @@ function applyQuery(url: URL, query?: Query): void {
     if (v === undefined || v === null || v === "") continue;
     if (Array.isArray(v)) {
       if (v.length === 0) continue;
+      // List<T> binds from a bare comma-separated list (ServiceStack accepts CSV).
       url.searchParams.set(k, v.join(","));
+    } else if (typeof v === "object" && !(v instanceof Date)) {
+      // Nested object (e.g. DateRangeFilter { start, end }) → JSV object literal.
+      // Without this it would stringify to "[object Object]" and the filter would
+      // silently no-op — the classic stock @servicestack/client .get() pitfall.
+      url.searchParams.set(k, jsvEncode(v));
     } else {
       url.searchParams.set(k, String(v));
     }
   }
+}
+
+/** Characters that force a JSV string element to be quoted. */
+const JSV_SPECIAL = /[":,{}[\]\r\n]/;
+
+/**
+ * Encode a value as ServiceStack JSV for a query string. Objects → `{k:v,...}`,
+ * arrays → `[a,b,c]`, strings quoted (with inner `"` doubled) only when they
+ * contain JSV structural chars. We do NOT percent-encode here — `URLSearchParams.set`
+ * does that, and double-encoding would corrupt the token. Mirrors JSV.encodeObject
+ * in @servicestack/client (the format the server's query binder consumes).
+ */
+export function jsvEncode(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (Array.isArray(v)) return `[${v.map(jsvEncode).join(",")}]`;
+  if (typeof v === "object" && !(v instanceof Date)) {
+    const parts: string[] = [];
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (val === undefined || val === null) continue;
+      parts.push(`${k}:${jsvEncode(val)}`);
+    }
+    return `{${parts.join(",")}}`;
+  }
+  const s = v instanceof Date ? v.toISOString() : String(v);
+  return JSV_SPECIAL.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 // ---------------------------------------------------------------------------

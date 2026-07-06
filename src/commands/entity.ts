@@ -12,7 +12,7 @@ import {
 import type { EntityDef, EntityV2, EntityV3, FlagDef } from "../entities.js";
 import { CliError, EXIT } from "../exit-codes.js";
 import { addGlobalFlags } from "../global-flags.js";
-import { request, type RequestSpec } from "../http.js";
+import { request, type Query, type QueryValue, type RequestSpec } from "../http.js";
 import { normalizeResponse, redactCreds } from "../normalize.js";
 import {
   banner,
@@ -229,27 +229,42 @@ async function listV3(
   profile: TenantProfile,
   resolved: ResolvedTenant,
 ): Promise<void> {
-  const query: Record<string, string | number | boolean | string[] | undefined> = {
-    page: opts.page,
-    countPerPage: opts.count,
-    query: opts.query,
-    ids: opts.ids ? opts.ids.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
-    archived: opts.archived ? true : undefined,
-    detailed: opts.brief ? false : undefined,
-    // NOTE: --select/--fields are CLIENT-SIDE projection (applied by emit() to the full
-    // response). We deliberately do NOT forward them to the server's `Fields` sparse
-    // projection — that returns null-valued fields (verified against prod). Use --brief for
-    // server-side payload reduction (Detailed=false → id + display name only).
-    sortField: opts.sort,
-    sortOrder: opts.sort ? (opts.desc ? "Descend" : "Ascend") : undefined,
-    ...filterQuery(v3.listFilters, opts),
-  };
+  // Scheduling (ListEvents<T>) has no paging and returns { events: [...] }: build a
+  // minimal query (only the filters) and unwrap the envelope. Everything else uses
+  // the standard ListEntitiesRequest shape.
+  const isEvents = v3.listStyle === "events";
+  const query: Query = isEvents
+    ? { ...filterQuery(v3.listFilters, opts) }
+    : {
+        page: opts.page,
+        countPerPage: opts.count,
+        query: opts.query,
+        ids: opts.ids ? opts.ids.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+        archived: opts.archived ? true : undefined,
+        detailed: opts.brief ? false : undefined,
+        // NOTE: --select/--fields are CLIENT-SIDE projection (applied by emit() to the full
+        // response). We deliberately do NOT forward them to the server's `Fields` sparse
+        // projection — that returns null-valued fields (verified against prod). Use --brief for
+        // server-side payload reduction (Detailed=false → id + display name only).
+        sortField: opts.sort,
+        sortOrder: opts.sort ? (opts.desc ? "Descend" : "Ascend") : undefined,
+        ...filterQuery(v3.listFilters, opts),
+      };
 
   if (globals.dryRun) {
     emit(planned("GET", v3.uriBase, query, undefined, resolved), globals);
     return;
   }
   printBanner(resolved, globals);
+
+  if (isEvents) {
+    const res = await request<Record<string, unknown>>(profile, {
+      method: "GET", path: v3.uriBase, query, timeoutMs: parseTimeout(globals),
+    });
+    const events = res.data?.events ?? res.data?.Events ?? [];
+    emit(normalizeResponse({ items: events }, "v3", !!globals.raw), { ...globals, emptyExit: true });
+    return;
+  }
 
   if (opts.all) {
     const data = await listAllV3(profile, v3.uriBase, query, opts, globals);
@@ -264,7 +279,7 @@ async function listV3(
 async function listAllV3(
   profile: TenantProfile,
   uriBase: string,
-  baseQuery: Record<string, string | number | boolean | string[] | undefined>,
+  baseQuery: Query,
   opts: ListOpts,
   globals: GlobalFlags,
 ): Promise<{ items: unknown[]; totalCount: number }> {
@@ -666,13 +681,21 @@ export function addFilterOptions(cmd: Command, filters?: FlagDef[]): void {
 export function filterQuery(
   filters: FlagDef[] | undefined,
   opts: Record<string, unknown>,
-): Record<string, string | number | boolean | string[] | undefined> {
-  const out: Record<string, string | number | boolean | string[] | undefined> = {};
+): Record<string, QueryValue | undefined> {
+  const out: Record<string, QueryValue | undefined> = {};
   if (!filters) return out;
   for (const f of filters) {
     const val = opts[optKey(f.option)];
     if (val === undefined || (Array.isArray(val) && val.length === 0)) continue;
-    out[f.field] = val as string | string[];
+    if (f.nest) {
+      // Merge the two flags of a date window into one nested object; the HTTP layer
+      // JSV-encodes it (e.g. --created-after/--created-before → dateCreated:{start,end}).
+      const parent = (out[f.nest.parent] as Record<string, QueryValue> | undefined) ?? {};
+      parent[f.nest.key] = val as QueryValue;
+      out[f.nest.parent] = parent;
+    } else {
+      out[f.field] = val as QueryValue;
+    }
   }
   return out;
 }
@@ -719,7 +742,7 @@ export function translateBody(
 function planned(
   method: string,
   path: string,
-  query: Record<string, string | number | boolean | string[] | undefined> | undefined,
+  query: Query | undefined,
   body: unknown,
   resolved: ResolvedTenant,
 ): unknown {
