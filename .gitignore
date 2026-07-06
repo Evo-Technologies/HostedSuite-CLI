@@ -1,0 +1,23 @@
+# Secrets — local-only files, never committed
+*.local.md
+*.local.json
+
+# Internal planning docs — LOCAL ONLY, never published.
+# Derived from the PRIVATE Evo-Technologies/HostedSuite-v2 source (file:line citations,
+# production hostnames, internal architecture). Kept full-fidelity on disk for the implementer;
+# never committed so this repo can go public without leaking non-public material.
+# The public repo gets its own sanitized README/entry-point instead.
+/CLAUDE.md
+/docs/PLAN.md
+/docs/API-NOTES.md
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Test/runtime artifacts
+coverage/
+.hs/
+.env
