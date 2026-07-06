@@ -20,8 +20,12 @@ Available on every leaf command.
 | `-v, --verbose` | Verbose progress to stderr |
 | `--quiet` | Suppress the routine tenant banner on stderr. Never suppresses safety notes (recent-switch warning, phase-1 instructions) |
 | `--raw` | Disable casing/envelope normalization (see the wire body as-is). Credential redaction still applies |
-| `--tenant <alias>` | Override the active tenant for this one call. Counts as a "switch" for the recent-switch guard. Rejected by `hs confirm` |
+| `--tenant <alias>` | Override the active tenant for this one call. Highest priority in tenant resolution (`--tenant` flag > `HS_TENANT` env pin > config's active tenant). Counts as a "switch" for the recent-switch guard. Rejected by `hs confirm` |
 | `--timeout <ms>` | Per-request timeout override (default 30000) |
+
+Tenant resolution precedence is `--tenant` > `HS_TENANT` > the config's active tenant (see `## tenant`
+and `## config` below). In **strict mode** (`require-tenant`), a command given neither `--tenant` nor
+`HS_TENANT` exits **2** instead of silently falling back to the active tenant.
 
 ## Response shapes
 
@@ -31,7 +35,7 @@ Available on every leaf command.
 | `<noun> get <id>` | The entity directly |
 | `<noun> create` | The created entity |
 | `<noun> patch <id>` | The updated entity (or, under `--dry-run`, `{dryRun:true, method, path, tenant, diff:[...], body}`) |
-| `<noun> delete <id>` | `{ok:true}` or the server's (usually empty) body |
+| `<noun> delete <id>` | `{ok:true}` or the server's (usually empty) body; a v2 `--hard` delete instead prints the phase-1 JSON (see `bulk-*` row) and exits 11 |
 | `<noun> bulk-*` | Phase 1: `{requiresConfirmation:true, token, expiresAt, action, tenant, summary, affectedCount, previewPath, recentTenantSwitch}`, written directly to stdout (bypasses `--select`/`--out`) |
 | `confirm <token>` | `{token, action, applied: N, failed: [{index,path,error}], failuresPath?}` |
 
@@ -64,12 +68,42 @@ hs tenant probe [alias]
 - `probe [alias]` (default: active) re-runs version detection and persists the result. Requires a
   resolvable password (flag/env/profile) — fails with exit 4 otherwise.
 
+**Tenant resolution & strict mode.** Precedence: `--tenant <alias>` (per-call override) → `HS_TENANT`
+env pin → the config's `activeTenant` (set via `use`). Setting `HS_TENANT=<alias>` in a shell/tab pins
+every command run there to `<alias>` regardless of what `hs tenant use` sets elsewhere — the routine
+banner renders `[<alias> · PINNED]` instead of `[<alias>]` so a pinned session is visually obvious.
+**Strict mode** (`hs config set require-tenant true`, or `HS_REQUIRE_TENANT=1` for one session only)
+refuses the final fallback: a command given neither `--tenant` nor `HS_TENANT` exits **2** rather than
+silently acting on the active tenant — this stops a stale/forgotten tab from acting on the wrong
+account. `hs tenant` management subcommands themselves are exempt (they must keep working with no
+tenant selected).
+
 **Probe logic** (`hs tenant add` without `--api-version`, and `hs tenant probe`):
 1. `GET /auth/info` — a 200 response whose JSON body has an `isAuthenticated` key (any value) ⇒ **v3**.
 2. Otherwise `POST /authenticate` — any well-formed JSON object response (including an error-shaped
    one) ⇒ **v2**, since the route existing at all proves v2.
 3. A network/TLS/DNS failure while probing throws exit 8 (retryable) — never silently misclassified.
 4. Neither route responds with a well-formed body ⇒ exit 10, "not a HostedSuite API".
+
+## config
+
+```
+hs config list
+hs config get <key>
+hs config set <key> <value>
+```
+
+Persisted CLI settings — org-wide behavior toggles, not tied to any tenant (the command itself never
+targets a tenant). Stored under `settings` in the config file (`~/.config/hostedsuite/config.json`).
+Currently one key:
+
+- `require-tenant` (bool: `true`/`false`/`1`/`0`) — strict mode. When `true`, every command must be
+  given a tenant explicitly via `--tenant <alias>` or `HS_TENANT=<alias>`; the ambient active tenant
+  (`hs tenant use`) is refused and the command exits 2 instead. `hs tenant` management subcommands are
+  exempt — they keep working with no explicit tenant even in strict mode. `HS_REQUIRE_TENANT=1` forces
+  the same behavior for one session without persisting it to the config file.
+
+Example: `hs config set require-tenant true` — refuse the ambient active tenant; force `--tenant`/`HS_TENANT`.
 
 ## whoami / auth
 
@@ -196,6 +230,12 @@ Requires `--force`. v3: `DELETE /<base>/{id}` — always a soft archive, recover
 posts to the entity's `archive` route by default; `--hard` posts to `hardDelete` instead, if the
 entity defines one — otherwise exit 9 naming which (`archive`/`hard delete`) isn't mapped.
 
+A v2 `--hard` delete is genuinely irreversible (no restore route), so it does not execute on this
+invocation — it two-phase gates the same way as `bulk-*`: it prints the phase-1 JSON and exits **11**;
+run `hs confirm <token>` to actually delete. It is also **not journaled** (no `hs undo` after the
+fact — there's nothing to reverse). Plain `delete` (no `--hard`) and v3 delete are ordinary single
+writes: not gated, and journaled/undoable via `hs undo`.
+
 ## `<noun>` bulk-patch / bulk-archive / bulk-restore
 
 Attached to every writable, non-singleton noun (not `email`, `completed-form`, `webhook-call`,
@@ -302,8 +342,12 @@ hs my-contacts <contactId>
 | `meeting-room-resources` | yes | exit 9, no v3 equivalent | `POST /scheduling/available-resources` |
 | `my-contacts <contactId>` | yes | exit 9, no v3 equivalent | `POST /contacts/my-contacts` |
 
-All are read-only except `dialing-rule create`/`update`, which are ordinary single writes (tenant
-banner + recent-switch note, no two-phase gate — there is no bulk form of these).
+All are read-only except `dialing-rule create`/`update`. Those two are two-phase gated the same way as
+`bulk-*` — a dialing rule write has no delete route (not undoable), so instead of writing immediately
+it prints the phase-1 JSON and exits **11**; run `hs confirm <token>` to apply. There is no bulk form
+of these commands — the gate is reused for a single-record write purely because it is irreversible,
+same reasoning as a v2 `<noun> delete --hard`. Like hard-delete, these are **not journaled** (no `hs
+undo` afterward). v3 tenants are read-only for dialing rules — `create`/`update` exit 9 there.
 
 ## reception-call — call records (CDR)
 
@@ -375,9 +419,15 @@ emits `{name, description, usage, aliases, arguments[], options[], subcommands[]
 | Variable | Purpose |
 |---|---|
 | `HS_PASSWORD` | Fallback password source (flag → `HS_PASSWORD` → stored profile → prompt) |
+| `HS_TENANT` | Pin the active tenant for this session/shell (e.g. a tab) to `<alias>`, overriding the config's active tenant. The routine banner shows `[<alias> · PINNED]`. A per-call `--tenant <alias>` flag still wins over the pin. Naming an alias absent from the config exits 10 |
+| `HS_REQUIRE_TENANT` | Set to `1` to force strict mode for this session only (see `hs config set require-tenant true`), without persisting it |
+| `HS_NO_JOURNAL` | Set to `1` to disable the write journal entirely (no reads, no writes) — `hs history`/`hs undo` have nothing to show while this is set |
 | `HOSTEDSUITE_CONFIG_DIR` | Override config dir (default `~/.config/hostedsuite`) |
 | `HOSTEDSUITE_CACHE_DIR` | Override cache dir for bulk plans (default `~/.cache/hostedsuite`) |
 | `HOSTEDSUITE_NO_BANNER` | Set to `1` to suppress the routine tenant banner globally |
+
+Tenant resolution precedence: `--tenant` flag > `HS_TENANT` env pin > the config's active tenant
+(`hs tenant use`). See `## config` and `## tenant` above for strict mode and the `PINNED` banner tag.
 
 ## The entity registry
 
@@ -464,8 +514,8 @@ the sole body field.
 
 Every registry noun above already has `list`/`get` (+ `create`/`patch`/`delete` unless read-only, +
 `bulk-patch`/`bulk-archive`/`bulk-restore` unless read-only or singleton) wired through the generic
-command factory. `tenant`, `whoami`/`auth`, `confirm`, `api`, `report`, `file`,
-`client ai-settings`/`prompt-lint`, `completed-form mark-read`, the v2-only data/config commands
+command factory. `tenant`, `config`, `whoami`/`auth`, `confirm`, `history`/`undo`, `api`, `report`,
+`file`, `client ai-settings`/`prompt-lint`, `completed-form mark-read`, the v2-only data/config commands
 (`call-allowance`, `dialing-rule`, `time-zones`, `remote-phones`, `availability`,
 `meeting-room-resources`, `my-contacts`), `schema`, `exit-codes` are all implemented. What's *not*
 built: per-entity v2 write support beyond `client`/`contact`/`center`/`industry`/`reservation`/
@@ -473,3 +523,10 @@ built: per-entity v2 write support beyond `client`/`contact`/`center`/`industry`
 pre-validation for reservation/appointment windows; `--concurrency` on `confirm` (currently always
 serial); AI plans/usage/onboarding (explicitly out of scope); any AI-session apply/discard/changes-review
 command (explicitly out of scope — legacy MCP system, not used by this CLI).
+
+**What's gated vs. undoable:** two-phase gating (phase 1 exits **11**, `hs confirm <token>` applies)
+covers `bulk-patch`/`bulk-archive`/`bulk-restore` (gated for blast radius — but still journaled and
+undoable via `hs undo` once confirmed), a v2 `<noun> delete --hard`, and `dialing-rule create`/`update`
+(the latter two gated because they are genuinely irreversible — no delete/restore route — and are
+**not** journaled). Every other write (`create`, `patch`, plain `delete`, v3 delete) is an ordinary
+single write gated only by `--force`, and is journaled/undoable via `hs history`/`hs undo`.

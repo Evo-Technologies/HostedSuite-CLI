@@ -53,7 +53,7 @@ approval step here is what killed the predecessor tool. In exchange:
   `--hard` opt-in for a true delete where mapped).
 - A stderr `NOTE: this write targets a different tenant than your last write (acme → other) —
   re-verify with the user.` fires on single writes too, whenever the target tenant differs from the
-  last one actually written to, or was switched-to/added within the last 10 minutes. This note is
+  last tenant actually written to (which is nothing on the session's first write). This note is
   never suppressed by `--quiet`. Stop and re-verify before proceeding when you see it.
 
 ### State the tenant before any write

@@ -111,7 +111,10 @@ legacy v2-only data/config endpoints round out the surface: `call-allowance`, `d
 across both API versions support date-range filtering (`--created-after`/`--created-before` and
 per-entity variants) and repeatable array filters. Nouns/verbs that exist on only one API generation
 exit `9` with an explanatory message on the other — `--help` stays identical everywhere so the boundary
-is taught rather than hidden. See `skills/hostedsuite/references/COMMANDS.md` for the full breakdown.
+is taught rather than hidden. Every write is journaled and reversible with `hs undo`/`hs history`, and
+tenant selection can be pinned per session (`HS_TENANT`) or made strict (`require-tenant`) so a stale
+tab can't act on the wrong account. See `skills/hostedsuite/references/COMMANDS.md` for the full
+breakdown.
 
 ## License
 
