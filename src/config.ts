@@ -106,14 +106,22 @@ export function getTenant(cfg: ConfigFile, alias: string): TenantProfile | undef
 }
 
 /**
- * Strict "require-tenant" mode is ON when persisted in config
- * (`settings.requireTenant === true`) OR forced for the session via
- * `HS_REQUIRE_TENANT=1`. In strict mode a command may not fall back to the
- * ambient active tenant — the caller must select one explicitly.
+ * Strict "require-tenant" mode: in strict mode a command may not fall back to the
+ * ambient active tenant — the caller must select one explicitly (`--tenant` or
+ * `HS_TENANT`). Precedence:
+ *   - `settings.requireTenant === true`  → always on (even single-tenant)
+ *   - `HS_REQUIRE_TENANT=1`              → always on (session override)
+ *   - `settings.requireTenant === false` → always off
+ *   - unset (DEFAULT)                    → on once 2+ tenants are configured.
+ * The default is safe-by-design: the wrong-tenant footgun only exists when more
+ * than one tenant is configured, so a single-tenant setup is never forced to pass
+ * `--tenant`, but the moment a second tenant is added the ambient fallback is
+ * refused. Turn it fully off with `hs config set require-tenant false`.
  */
 export function strictModeOn(cfg: ConfigFile): boolean {
-  if (cfg.settings?.requireTenant === true) return true;
-  return process.env.HS_REQUIRE_TENANT === "1";
+  if (cfg.settings?.requireTenant === true || process.env.HS_REQUIRE_TENANT === "1") return true;
+  if (cfg.settings?.requireTenant === false) return false;
+  return Object.keys(cfg.tenants).length >= 2;
 }
 
 /**

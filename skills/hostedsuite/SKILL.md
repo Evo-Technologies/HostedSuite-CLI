@@ -24,11 +24,12 @@ tenants, or right after `hs tenant add`). The stderr banner (`[acme] customer=Ac
 
 **Always pass `--tenant <alias>` explicitly on every command — never rely on the ambient active
 tenant.** Another tab or session may have run `hs tenant use` and moved it out from under you; the
-active tenant is shared mutable state. If the org runs **strict mode** (`hs config set require-tenant
-true`, or `HS_REQUIRE_TENANT=1` in the environment), a command with no `--tenant` and no `HS_TENANT`
-**errors (exit 2)** instead of silently falling back — that is the safe default. Otherwise a missing
-tenant *silently uses whatever tenant is currently active*, which is exactly the stale-state footgun
-above. A tab/session can also be **pinned** by exporting `HS_TENANT=<alias>`: every command in that
+active tenant is shared mutable state. **Strict mode** makes a command with no `--tenant` and no
+`HS_TENANT` **error (exit 2)** instead of silently falling back — and it is **ON by default once two or
+more tenants are configured** (a single-tenant setup stays lax). So in any real multi-tenant setup you
+must pass `--tenant`; if you ever see the exit-2 "Strict mode is on: no tenant specified", add
+`--tenant <alias>`. (It can be forced on/off with `hs config set require-tenant true|false` or
+`HS_REQUIRE_TENANT=1`.) A tab/session can also be **pinned** by exporting `HS_TENANT=<alias>`: every command in that
 session then targets that tenant unless `--tenant` overrides it, and the banner tag shows `· PINNED`
 (`[acme · PINNED]`) so it is obvious the session is locked. `--tenant` still wins over `HS_TENANT`,
 which still wins over the active tenant.

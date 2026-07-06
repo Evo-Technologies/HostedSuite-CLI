@@ -129,6 +129,13 @@ describe("resolveActiveTenant — strict require-tenant mode", () => {
     expect(strictModeOn({ ...seed("acme") })).toBe(true);
   });
 
+  it("defaults to strict once 2+ tenants are configured; single-tenant stays lax", () => {
+    delete process.env.HS_REQUIRE_TENANT;
+    expect(strictModeOn(seed("acme"))).toBe(false);                 // 1 tenant → unambiguous, not strict
+    expect(strictModeOn(seed("acme", "beta"))).toBe(true);          // 2+ tenants → strict by default
+    expect(strictModeOn({ ...seed("acme", "beta"), settings: { requireTenant: false } })).toBe(false); // explicit off wins
+  });
+
   it("throws EXIT.USAGE when strict + no --tenant + no HS_TENANT (would fall back to active)", () => {
     const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme", settings: { requireTenant: true } };
     expect(() => resolveActiveTenant(cfg)).toThrowError(

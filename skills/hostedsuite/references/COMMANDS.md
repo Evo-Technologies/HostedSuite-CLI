@@ -97,13 +97,16 @@ Persisted CLI settings — org-wide behavior toggles, not tied to any tenant (th
 targets a tenant). Stored under `settings` in the config file (`~/.config/hostedsuite/config.json`).
 Currently one key:
 
-- `require-tenant` (bool: `true`/`false`/`1`/`0`) — strict mode. When `true`, every command must be
+- `require-tenant` (bool: `true`/`false`/`1`/`0`) — strict mode. When on, every command must be
   given a tenant explicitly via `--tenant <alias>` or `HS_TENANT=<alias>`; the ambient active tenant
   (`hs tenant use`) is refused and the command exits 2 instead. `hs tenant` management subcommands are
   exempt — they keep working with no explicit tenant even in strict mode. `HS_REQUIRE_TENANT=1` forces
-  the same behavior for one session without persisting it to the config file.
+  it on for one session without persisting it.
+  **Default when unset: ON once 2+ tenants are configured** (the wrong-tenant footgun only exists with
+  multiple tenants; a single-tenant setup stays lax). `true` forces it on even single-tenant; `false`
+  turns it fully off.
 
-Example: `hs config set require-tenant true` — refuse the ambient active tenant; force `--tenant`/`HS_TENANT`.
+Example: `hs config set require-tenant false` — opt out of strict mode; allow the ambient active tenant.
 
 ## whoami / auth
 
