@@ -22,6 +22,24 @@ tenants, or right after `hs tenant add`). The stderr banner (`[acme] customer=Ac
 · v3 · user=user@example.com`) is informational only — `hs whoami`'s JSON is the source of truth.
 `--quiet` silences the routine banner but never a safety note.
 
+**Always pass `--tenant <alias>` explicitly on every command — never rely on the ambient active
+tenant.** Another tab or session may have run `hs tenant use` and moved it out from under you; the
+active tenant is shared mutable state. If the org runs **strict mode** (`hs config set require-tenant
+true`, or `HS_REQUIRE_TENANT=1` in the environment), a command with no `--tenant` and no `HS_TENANT`
+**errors (exit 2)** instead of silently falling back — that is the safe default. Otherwise a missing
+tenant *silently uses whatever tenant is currently active*, which is exactly the stale-state footgun
+above. A tab/session can also be **pinned** by exporting `HS_TENANT=<alias>`: every command in that
+session then targets that tenant unless `--tenant` overrides it, and the banner tag shows `· PINNED`
+(`[acme · PINNED]`) so it is obvious the session is locked. `--tenant` still wins over `HS_TENANT`,
+which still wins over the active tenant.
+
+**Hard deletes and dialing-rule writes are two-phase gated** (exit 11 → `hs confirm <token>`), like
+bulk writes, because they **cannot be undone**: `hs <noun> delete <id> --hard --force` (v2 true delete,
+no restore route) and `hs dialing-rule create` / `hs dialing-rule update` (rare config writes with no
+delete/undo path). They build a plan and exit 11 with the same phase-1 contract as bulk — quote the
+`summary` verbatim, get an explicit yes, then `hs confirm`. (A plain v3/v2 soft `delete` still archives
+immediately and stays recoverable via `patch --restore` / `hs undo`.)
+
 ### Single writes: banner + dry-run, no gate
 
 `create`, `patch`, single `delete` are **not** two-phase gated — support does dozens a day and a

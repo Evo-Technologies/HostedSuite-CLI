@@ -1,15 +1,7 @@
 import fs from "node:fs";
-import path from "node:path";
-import { randomBytes } from "node:crypto";
 import { Command } from "commander";
 
 import {
-  planArtifactPath,
-  PLAN_TTL_MS,
-  recentTenantSwitch,
-  writePlan,
-  type BulkPlan,
-  type ConfigFile,
   type PlanRequest,
   type ResolvedTenant,
   type TenantProfile,
@@ -19,7 +11,8 @@ import { CliError, EXIT } from "../exit-codes.js";
 import { addGlobalFlags } from "../global-flags.js";
 import { request } from "../http.js";
 import { normalizeResponse } from "../normalize.js";
-import { banner, note, printBanner, readBodyFromFlag, type GlobalFlags } from "../output.js";
+import { readBodyFromFlag, type GlobalFlags } from "../output.js";
+import { gateAndExit, type PreviewRecord } from "../write-gate.js";
 import {
   addFilterOptions,
   computeDiff,
@@ -30,7 +23,6 @@ import {
   parseTimeout,
   resolveActive,
   translateBody,
-  type DiffEntry,
 } from "./entity.js";
 
 // ===========================================================================
@@ -50,13 +42,6 @@ interface BulkOpts {
   max?: string;
   file?: string;
   [key: string]: unknown;
-}
-
-interface PreviewRecord {
-  id: string;
-  method: string;
-  path: string;
-  diff?: DiffEntry[];
 }
 
 /**
@@ -123,7 +108,6 @@ function addBulkPatch(root: Command, def: EntityDef): void {
     gateAndExit({
       action: `bulk-patch ${def.plural}`,
       summary: summarize("PATCH", ids.length, def, resolved, fileBody),
-      def,
       resolved,
       cfg,
       globals,
@@ -184,7 +168,6 @@ function addFixedBulk(root: Command, def: EntityDef, op: "archive" | "restore"):
     gateAndExit({
       action: `${name} ${def.plural}`,
       summary: summarize(verb, ids.length, def, resolved),
-      def,
       resolved,
       cfg,
       globals,
@@ -383,97 +366,6 @@ async function fetchCurrentV2(
 }
 
 // ---------------------------------------------------------------------------
-// Gate: persist the plan + preview, print phase-1 JSON, exit 11
-// ---------------------------------------------------------------------------
-
-interface GateParams {
-  action: string;
-  summary: string;
-  def: EntityDef;
-  resolved: ResolvedTenant;
-  cfg: ConfigFile;
-  globals: GlobalFlags;
-  requests: PlanRequest[];
-  records: PreviewRecord[];
-  sampleLines: string[];
-  affectedCount: number;
-}
-
-function gateAndExit(p: GateParams): never {
-  const token = newToken();
-  const now = Date.now();
-  const createdAt = new Date(now).toISOString();
-  const expiresAt = new Date(now + PLAN_TTL_MS).toISOString();
-  const recentSwitch = recentTenantSwitch(p.cfg, p.resolved.alias);
-  const { profile, alias } = p.resolved;
-
-  const planTenant = {
-    alias,
-    baseUrl: profile.baseUrl,
-    customerName: profile.customerName,
-    apiVersion: profile.apiVersion,
-  };
-
-  const plan: BulkPlan = {
-    token,
-    createdAt,
-    expiresAt,
-    tenant: planTenant,
-    action: p.action,
-    summary: p.summary,
-    recentTenantSwitch: recentSwitch,
-    requests: p.requests, // NO credentials — injected at execute time from the pinned profile
-  };
-  writePlan(token, plan);
-
-  const previewPath = planArtifactPath(token, "preview.json");
-  writeJson600(previewPath, {
-    token,
-    action: p.action,
-    tenant: planTenant,
-    affectedCount: p.affectedCount,
-    records: p.records,
-  });
-
-  const phase1 = {
-    requiresConfirmation: true,
-    token,
-    expiresAt,
-    action: p.action,
-    tenant: planTenant,
-    summary: p.summary,
-    affectedCount: p.affectedCount,
-    previewPath,
-    recentTenantSwitch: recentSwitch,
-  };
-
-  // stdout — the agent-parseable phase-1 contract. Written directly (not via
-  // emit) so --select/--out cannot reshape or redirect it.
-  const isTty = !!process.stdout.isTTY;
-  process.stdout.write(`${isTty ? JSON.stringify(phase1, null, 2) : JSON.stringify(phase1)}\n`);
-
-  // stderr — human summary + instructions (safety notes; not suppressed by --quiet).
-  printBanner(p.resolved, p.globals);
-  note(`Phase 1 of 2 — ${p.action}. Review before confirming:`);
-  note(`  ${p.summary}`);
-  if (p.sampleLines.length > 0) {
-    banner("Preview (first 10):", p.globals);
-    for (const l of p.sampleLines) banner(l, p.globals);
-    if (p.affectedCount > 10) {
-      banner(`  … and ${p.affectedCount - 10} more (full preview: ${previewPath})`, p.globals);
-    }
-  }
-  if (recentSwitch) {
-    note(
-      "NOTE: this plan targets a tenant you recently switched to or have not written to — re-verify with the user.",
-    );
-  }
-  note(`Show this summary to the user, get an explicit yes, then run:  hs confirm ${token}`);
-
-  process.exit(EXIT.CONFIRMATION_REQUIRED);
-}
-
-// ---------------------------------------------------------------------------
 // Small local helpers
 // ---------------------------------------------------------------------------
 
@@ -563,25 +455,6 @@ function readIdsFile(file: string): string[] {
     return arr.map((x) => String(x).trim()).filter(Boolean);
   }
   return raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-}
-
-function writeJson600(target: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(target, JSON.stringify(data, null, 2), { mode: 0o600 });
-  try {
-    fs.chmodSync(target, 0o600);
-  } catch {
-    /* Windows: falls back to profile ACL */
-  }
-}
-
-const TOKEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-
-function newToken(): string {
-  const bytes = randomBytes(10);
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 1) out += TOKEN_ALPHABET[bytes[i] % TOKEN_ALPHABET.length];
-  return out;
 }
 
 function lowerFirst(key: string): string {

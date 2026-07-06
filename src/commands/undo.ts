@@ -3,6 +3,7 @@ import { Command } from "commander";
 import {
   loadConfig,
   setLastWriteTenant,
+  strictModeOn,
   type ResolvedTenant,
   type TenantProfile,
 } from "../config.js";
@@ -80,7 +81,16 @@ export function buildHistoryCommand(): Command {
 
 function resolveJournalAlias(override?: string): string {
   const cfg = loadConfig();
-  const alias = override ?? cfg.activeTenant;
+  const env = process.env.HS_TENANT;
+  const hasEnv = typeof env === "string" && env.length > 0;
+  // Same precedence as resolveActiveTenant: --tenant → HS_TENANT → active tenant.
+  const alias = override ?? (hasEnv ? env : cfg.activeTenant);
+  if (strictModeOn(cfg) && !override && !hasEnv) {
+    throw new CliError(
+      EXIT.USAGE,
+      "Strict mode is on: no tenant specified. Pass --tenant <alias> or set HS_TENANT=<alias>.",
+    );
+  }
   if (!alias) {
     throw new CliError(EXIT.CONFIG, "No active tenant. Pass --tenant <alias> or run `hs tenant use <alias>`.");
   }

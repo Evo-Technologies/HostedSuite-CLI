@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildEntityCommand } from "../src/commands/entity.js";
 import { addBulkCommands } from "../src/commands/bulk.js";
 import { buildConfirmCommand } from "../src/commands/confirm.js";
+import { buildDialingRuleCommand } from "../src/commands/dialing-rule.js";
 import { findEntity } from "../src/entities.js";
 import {
   consumePlanAtomically,
@@ -119,6 +120,96 @@ describe("bulk gate — ALWAYS two-phase, never executes on first run", () => {
     const dir = plansDir();
     const entries = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
     expect(entries).toHaveLength(0);
+  });
+});
+
+describe("single irreversible writes reuse the two-phase gate", () => {
+  function useV2Tenant() {
+    saveConfig({ activeTenant: "acme", tenants: { acme: profile("v2") } });
+  }
+
+  it("a v2 HARD delete builds a plan and exits 11 (does NOT execute)", async () => {
+    useV2Tenant();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cmd = buildEntityCommand(findEntity("client")!);
+    let exitCode: number | undefined;
+    try {
+      await cmd.parseAsync(["delete", "cid-1", "--hard", "--force"], { from: "user" });
+    } catch (err) {
+      if (err instanceof ProcessExit) exitCode = err.code;
+      else throw err;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(exitCode).toBe(EXIT.CONFIRMATION_REQUIRED);
+    // Nothing was executed — the gate exits before any network call.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const phase1 = JSON.parse(stdout.trim());
+    expect(phase1.requiresConfirmation).toBe(true);
+    expect(phase1.affectedCount).toBe(1);
+    expect(phase1.action).toBe("hard-delete client");
+
+    const plan = JSON.parse(fs.readFileSync(path.join(plansDir(), phase1.token, "plan.json"), "utf8"));
+    expect(plan.requests).toEqual([{ method: "POST", path: "/clients/delete", body: { ClientId: "cid-1" } }]);
+    expect(fs.readFileSync(path.join(plansDir(), phase1.token, "plan.json"), "utf8")).not.toMatch(/s3cret/);
+  });
+
+  it("a v2 soft delete (no --hard) does NOT gate — it archives immediately", async () => {
+    useV2Tenant();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ok: true }),
+      headers: { get: () => null },
+    })) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const cmd = buildEntityCommand(findEntity("client")!);
+      // Soft archive executes (returns normally); it must NOT exit 11.
+      await cmd.parseAsync(["delete", "cid-1", "--force"], { from: "user" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // No plan was created for the soft archive.
+    const dir = plansDir();
+    const entries = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    expect(entries).toHaveLength(0);
+  });
+
+  it("dialing-rule create builds a plan and exits 11 (does NOT execute)", async () => {
+    useV2Tenant();
+    const bodyFile = path.join(tmpRoot, "rule.json");
+    fs.writeFileSync(bodyFile, JSON.stringify({ name: "UK", template: "0{number}", centerId: "ctr-1" }));
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cmd = buildDialingRuleCommand();
+    let exitCode: number | undefined;
+    try {
+      await cmd.parseAsync(["create", "-f", bodyFile], { from: "user" });
+    } catch (err) {
+      if (err instanceof ProcessExit) exitCode = err.code;
+      else throw err;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(exitCode).toBe(EXIT.CONFIRMATION_REQUIRED);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const phase1 = JSON.parse(stdout.trim());
+    expect(phase1.action).toBe("create dialing-rule");
+    expect(phase1.affectedCount).toBe(1);
+
+    const plan = JSON.parse(fs.readFileSync(path.join(plansDir(), phase1.token, "plan.json"), "utf8"));
+    expect(plan.requests).toEqual([
+      { method: "POST", path: "/settings/dialing-rules/new", body: { Name: "UK", Template: "0{number}", CenterId: "ctr-1" } },
+    ]);
   });
 });
 

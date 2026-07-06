@@ -28,6 +28,7 @@ import {
   recentSwitchNote,
   type GlobalFlags,
 } from "../output.js";
+import { gateAndExit } from "../write-gate.js";
 
 // ===========================================================================
 // Shared helpers (exported for reuse by api/auth/confirm/tenant commands)
@@ -100,6 +101,14 @@ function fmt(v: unknown): string {
   if (typeof v === "string") return v.length > 60 ? `${v.slice(0, 57)}…` : v;
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }
 
 // ===========================================================================
@@ -699,6 +708,23 @@ function addDelete(root: Command, def: EntityDef): void {
       if (globals.dryRun) {
         emit(planned("POST", target.route, undefined, body, resolved), globals);
         return;
+      }
+      // A v2 HARD delete is genuinely irreversible (no restore route) — it is NOT
+      // executed here. Reuse the two-phase write gate: build a single-request plan,
+      // exit 11, and let `hs confirm` run it (creds injected at confirm time).
+      if (opts.hard) {
+        const host = hostOf(resolved.profile.baseUrl);
+        gateAndExit({
+          action: `hard-delete ${def.noun}`,
+          summary: `HARD DELETE ${def.noun} ${id} on tenant ${resolved.profile.customerName} (${host}) — irreversible, no restore.`,
+          resolved,
+          cfg,
+          globals,
+          requests: [{ method: "POST", path: target.route, body }],
+          records: [{ id, method: "POST", path: target.route }],
+          sampleLines: [`  [${id}] → POST ${target.route}`],
+          affectedCount: 1,
+        });
       }
       writePreamble(cfg, resolved, globals);
       const before = await fetchCurrentRecord(def, id, profile, globals);

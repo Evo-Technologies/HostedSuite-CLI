@@ -4,6 +4,7 @@ import { setLastWriteTenant } from "../config.js";
 import { CliError, EXIT } from "../exit-codes.js";
 import { addGlobalFlags } from "../global-flags.js";
 import { request } from "../http.js";
+import { extractType, recordWrite } from "../journal.js";
 import { normalizeResponse } from "../normalize.js";
 import { emit, note, printBanner, readBodyFromFlag, type GlobalFlags } from "../output.js";
 import { parseTimeout, resolveActive, writePreamble } from "./entity.js";
@@ -63,8 +64,10 @@ export function addAiSettingsCommands(clientRoot: Command): void {
         return;
       }
 
-      // Check the CURRENT configSource so we can warn before writing pointlessly.
-      const current = extractAiSettings(await fetchClient(id, globals).catch(() => undefined));
+      // Snapshot the CURRENT full client BEFORE the write — used both to warn on
+      // ResellerPortal config and as the journal `before` so `hs undo` can revert.
+      const beforeClient = await fetchClient(id, globals).catch(() => undefined);
+      const current = extractAiSettings(beforeClient);
       const currentSource = current ? (current as Record<string, unknown>).configSource : undefined;
       if (currentSource === RESELLER_PORTAL || aiSettings.configSource === RESELLER_PORTAL) {
         note(
@@ -81,8 +84,21 @@ export function addAiSettingsCommands(clientRoot: Command): void {
         retry: false,
         timeoutMs: parseTimeout(globals),
       });
+      const after = normalizeResponse(res.data, "v3", !!globals.raw);
       setLastWriteTenant(resolved.alias);
-      emit(normalizeResponse(res.data, "v3", !!globals.raw), globals);
+      // Journal as a `client` update (before/after are the full client, exactly as
+      // `hs client patch` records) so `hs undo` reverses the aiSettings change.
+      recordWrite(resolved, "set ai-settings", [
+        {
+          entityNoun: "client",
+          id,
+          type: extractType(after) ?? extractType(beforeClient),
+          operation: "update",
+          before: beforeClient ?? null,
+          after: after ?? null,
+        },
+      ]);
+      emit(after, globals);
     });
 
   clientRoot.addCommand(group);

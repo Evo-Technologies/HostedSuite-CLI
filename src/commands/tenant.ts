@@ -116,7 +116,8 @@ export function buildTenantCommand(): Command {
     .action((alias: string | undefined, _opts, command: Command) => {
       const globals = command.optsWithGlobals<GlobalFlags>();
       const cfg = loadConfig();
-      const { alias: resolvedAlias, profile } = resolveActiveTenant(cfg, alias);
+      // Management subcommand: exempt from strict require-tenant mode.
+      const { alias: resolvedAlias, profile } = resolveActiveTenant(cfg, alias, { allowAmbient: true });
       emit({ alias: resolvedAlias, active: resolvedAlias === cfg.activeTenant, ...redactProfile(profile) }, globals);
     });
 
@@ -142,7 +143,8 @@ export function buildTenantCommand(): Command {
     .action(async (alias: string | undefined, _opts, command: Command) => {
       const globals = command.optsWithGlobals<GlobalFlags>();
       const cfg = loadConfig();
-      const { alias: resolvedAlias, profile } = resolveActiveTenant(cfg, alias);
+      // Management subcommand: exempt from strict require-tenant mode.
+      const { alias: resolvedAlias, profile } = resolveActiveTenant(cfg, alias, { allowAmbient: true });
       const { resolvePassword } = await import("../config.js");
       const password = resolvePassword(profile);
       if (!password) {

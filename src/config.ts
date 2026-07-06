@@ -16,15 +16,29 @@ export interface TenantProfile {
   tenantChangedAt?: string;
 }
 
+/** Persisted CLI settings (org-wide behavior toggles). */
+export interface Settings {
+  /** Strict "require-tenant" mode: refuse ambient active-tenant fallback (see resolveActiveTenant). */
+  requireTenant?: boolean;
+}
+
 export interface ConfigFile {
   activeTenant?: string;
   lastWriteTenant?: string;
+  settings?: Settings;
   tenants: Record<string, TenantProfile>;
 }
+
+/** How a tenant was resolved: an explicit `--tenant` flag, the `HS_TENANT` env pin, or the config's active tenant. */
+export type TenantSource = "flag" | "env" | "active";
 
 export interface ResolvedTenant {
   alias: string;
   profile: TenantProfile;
+  /** Where the alias came from (absent on manually-constructed resolutions, e.g. confirm/undo pins). */
+  source?: TenantSource;
+  /** True when the alias was pinned via `HS_TENANT` — the banner renders `· PINNED`. */
+  pinned?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +106,59 @@ export function getTenant(cfg: ConfigFile, alias: string): TenantProfile | undef
 }
 
 /**
- * Resolve the tenant a command should target: an explicit `--tenant` override
- * wins, else the config's activeTenant. Throws EXIT.CONFIG when nothing resolves.
+ * Strict "require-tenant" mode is ON when persisted in config
+ * (`settings.requireTenant === true`) OR forced for the session via
+ * `HS_REQUIRE_TENANT=1`. In strict mode a command may not fall back to the
+ * ambient active tenant — the caller must select one explicitly.
  */
-export function resolveActiveTenant(cfg: ConfigFile, override?: string): ResolvedTenant {
-  const alias = override ?? cfg.activeTenant;
+export function strictModeOn(cfg: ConfigFile): boolean {
+  if (cfg.settings?.requireTenant === true) return true;
+  return process.env.HS_REQUIRE_TENANT === "1";
+}
+
+/**
+ * Resolve the tenant a command should target. Precedence:
+ *   override (the `--tenant` flag)  →  `HS_TENANT` env pin  →  config's activeTenant.
+ * The returned `source` records which won; `pinned` is true only for the env pin
+ * (so the banner can show `· PINNED`). A `--tenant` flag is NOT pinned — it is
+ * already explicit in the command.
+ *
+ * `HS_TENANT` naming an alias absent from the config throws EXIT.CONFIG.
+ *
+ * Strict mode (see strictModeOn): when ON and the resolution would fall back to
+ * the ambient active tenant (no `--tenant`, no `HS_TENANT`), throw EXIT.USAGE —
+ * unless `opts.allowAmbient` is set (used by the `hs tenant` management
+ * subcommands, which must keep working without an explicit tenant).
+ */
+export function resolveActiveTenant(
+  cfg: ConfigFile,
+  override?: string,
+  opts?: { allowAmbient?: boolean },
+): ResolvedTenant {
+  const env = process.env.HS_TENANT;
+  const hasEnv = typeof env === "string" && env.length > 0;
+
+  let alias: string | undefined;
+  let source: TenantSource;
+  if (override) {
+    alias = override;
+    source = "flag";
+  } else if (hasEnv) {
+    alias = env;
+    source = "env";
+  } else {
+    alias = cfg.activeTenant;
+    source = "active";
+  }
+
+  // Strict mode: refuse the ambient active-tenant fallback (no flag, no env pin).
+  if (strictModeOn(cfg) && !opts?.allowAmbient && !override && !hasEnv) {
+    throw new CliError(
+      EXIT.USAGE,
+      "Strict mode is on: no tenant specified. Pass --tenant <alias> or set HS_TENANT=<alias>.",
+    );
+  }
+
   if (!alias) {
     throw new CliError(
       EXIT.CONFIG,
@@ -105,9 +167,15 @@ export function resolveActiveTenant(cfg: ConfigFile, override?: string): Resolve
   }
   const profile = cfg.tenants[alias];
   if (!profile) {
+    if (source === "env") {
+      throw new CliError(
+        EXIT.CONFIG,
+        `HS_TENANT="${alias}" is not a configured tenant. Run \`hs tenant list\` to see configured tenants.`,
+      );
+    }
     throw new CliError(EXIT.CONFIG, `Unknown tenant "${alias}". Run \`hs tenant list\` to see configured tenants.`);
   }
-  return { alias, profile };
+  return { alias, profile, source, pinned: source === "env" };
 }
 
 /** Upsert a tenant profile. Pure: returns a new ConfigFile; caller saves. */

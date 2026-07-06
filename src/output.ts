@@ -162,14 +162,17 @@ function hostOf(baseUrl: string): string {
 /**
  * Routine tenant banner. Suppressible with `--quiet` (and HOSTEDSUITE_NO_BANNER=1).
  * Format: `[<alias>] customer=<name> · <host> · <v2|v3> · user=<user>`.
+ * When the tenant was pinned via `HS_TENANT`, the tag becomes `[<alias> · PINNED]`
+ * so it is visually obvious the session/tab is locked to that tenant.
  */
 export function printBanner(tenant: ResolvedTenant, ctx: GlobalFlags): void {
   if (ctx.quiet) return;
   if (process.env.HOSTEDSUITE_NO_BANNER === "1") return;
 
   const { alias, profile } = tenant;
+  const tag = tenant.pinned ? `[${alias} · PINNED]` : `[${alias}]`;
   const line =
-    `[${alias}] customer=${profile.customerName} · ${hostOf(profile.baseUrl)} · ` +
+    `${tag} customer=${profile.customerName} · ${hostOf(profile.baseUrl)} · ` +
     `${profile.apiVersion} · user=${profile.userName}`;
 
   const isTty = !!process.stderr.isTTY;

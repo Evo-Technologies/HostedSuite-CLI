@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   consumePlanAtomically,
@@ -12,11 +12,13 @@ import {
   resolveActiveTenant,
   saveConfig,
   setTenant,
+  strictModeOn,
   writePlan,
   type BulkPlan,
   type ConfigFile,
   type TenantProfile,
 } from "../src/config.js";
+import { buildConfigCommand } from "../src/commands/config.js";
 import { EXIT } from "../src/exit-codes.js";
 
 let tmpRoot: string;
@@ -25,11 +27,16 @@ beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hs-test-"));
   process.env.HOSTEDSUITE_CONFIG_DIR = path.join(tmpRoot, "config");
   process.env.HOSTEDSUITE_CACHE_DIR = path.join(tmpRoot, "cache");
+  // Ensure a clean env for every test (these leak across cases otherwise).
+  delete process.env.HS_TENANT;
+  delete process.env.HS_REQUIRE_TENANT;
 });
 
 afterEach(() => {
   delete process.env.HOSTEDSUITE_CONFIG_DIR;
   delete process.env.HOSTEDSUITE_CACHE_DIR;
+  delete process.env.HS_TENANT;
+  delete process.env.HS_REQUIRE_TENANT;
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
@@ -75,6 +82,118 @@ describe("resolveActiveTenant", () => {
     expect(() => resolveActiveTenant(cfg, "ghost")).toThrowError(
       expect.objectContaining({ code: EXIT.CONFIG, message: expect.stringContaining('Unknown tenant "ghost"') }),
     );
+  });
+});
+
+describe("resolveActiveTenant — precedence: --tenant > HS_TENANT > active", () => {
+  it("a --tenant flag wins over HS_TENANT and the active tenant (not pinned)", () => {
+    process.env.HS_TENANT = "beta";
+    const cfg: ConfigFile = { ...seed("acme", "beta", "gamma"), activeTenant: "gamma" };
+    const resolved = resolveActiveTenant(cfg, "acme");
+    expect(resolved.alias).toBe("acme");
+    expect(resolved.source).toBe("flag");
+    expect(resolved.pinned).toBe(false);
+  });
+
+  it("HS_TENANT wins over the active tenant and marks the resolution pinned", () => {
+    process.env.HS_TENANT = "beta";
+    const cfg: ConfigFile = { ...seed("acme", "beta"), activeTenant: "acme" };
+    const resolved = resolveActiveTenant(cfg);
+    expect(resolved.alias).toBe("beta");
+    expect(resolved.source).toBe("env");
+    expect(resolved.pinned).toBe(true);
+  });
+
+  it("falls back to the active tenant when no flag and no HS_TENANT (source active, not pinned)", () => {
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme" };
+    const resolved = resolveActiveTenant(cfg);
+    expect(resolved.alias).toBe("acme");
+    expect(resolved.source).toBe("active");
+    expect(resolved.pinned).toBe(false);
+  });
+
+  it("throws EXIT.CONFIG when HS_TENANT names an alias absent from the config", () => {
+    process.env.HS_TENANT = "ghost";
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme" };
+    expect(() => resolveActiveTenant(cfg)).toThrowError(
+      expect.objectContaining({ code: EXIT.CONFIG, message: expect.stringContaining('HS_TENANT="ghost"') }),
+    );
+  });
+});
+
+describe("resolveActiveTenant — strict require-tenant mode", () => {
+  it("strictModeOn reflects config settings and HS_REQUIRE_TENANT", () => {
+    expect(strictModeOn({ ...seed("acme") })).toBe(false);
+    expect(strictModeOn({ ...seed("acme"), settings: { requireTenant: true } })).toBe(true);
+    process.env.HS_REQUIRE_TENANT = "1";
+    expect(strictModeOn({ ...seed("acme") })).toBe(true);
+  });
+
+  it("throws EXIT.USAGE when strict + no --tenant + no HS_TENANT (would fall back to active)", () => {
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme", settings: { requireTenant: true } };
+    expect(() => resolveActiveTenant(cfg)).toThrowError(
+      expect.objectContaining({ code: EXIT.USAGE, message: expect.stringContaining("Strict mode is on") }),
+    );
+  });
+
+  it("passes in strict mode when a --tenant flag is given", () => {
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme", settings: { requireTenant: true } };
+    expect(resolveActiveTenant(cfg, "acme").alias).toBe("acme");
+  });
+
+  it("passes in strict mode when HS_TENANT is set", () => {
+    process.env.HS_TENANT = "acme";
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme", settings: { requireTenant: true } };
+    const resolved = resolveActiveTenant(cfg);
+    expect(resolved.alias).toBe("acme");
+    expect(resolved.pinned).toBe(true);
+  });
+
+  it("HS_REQUIRE_TENANT=1 also triggers strict mode", () => {
+    process.env.HS_REQUIRE_TENANT = "1";
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme" };
+    expect(() => resolveActiveTenant(cfg)).toThrowError(
+      expect.objectContaining({ code: EXIT.USAGE }),
+    );
+  });
+
+  it("allowAmbient exempts management subcommands from strict mode", () => {
+    const cfg: ConfigFile = { ...seed("acme"), activeTenant: "acme", settings: { requireTenant: true } };
+    expect(resolveActiveTenant(cfg, undefined, { allowAmbient: true }).alias).toBe("acme");
+  });
+});
+
+describe("hs config set/get roundtrip", () => {
+  it("persists require-tenant via `config set` and reads it back via `config get`", async () => {
+    saveConfig({ ...seed("acme"), activeTenant: "acme" });
+
+    const stdoutChunks: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: unknown) => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    }) as never);
+    try {
+      await buildConfigCommand().parseAsync(["set", "require-tenant", "true"], { from: "user" });
+      // Persisted under cfg.settings (camelCase).
+      expect(loadConfig().settings?.requireTenant).toBe(true);
+
+      stdoutChunks.length = 0;
+      await buildConfigCommand().parseAsync(["get", "require-tenant"], { from: "user" });
+      expect(JSON.parse(stdoutChunks.join("").trim())).toEqual({ "require-tenant": true });
+
+      // Round-trip back to false.
+      await buildConfigCommand().parseAsync(["set", "require-tenant", "0"], { from: "user" });
+      expect(loadConfig().settings?.requireTenant).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("rejects an unknown key with EXIT.USAGE", async () => {
+    saveConfig({ ...seed("acme"), activeTenant: "acme" });
+    await expect(buildConfigCommand().parseAsync(["set", "bogus", "true"], { from: "user" })).rejects.toMatchObject({
+      code: EXIT.USAGE,
+    });
   });
 });
 

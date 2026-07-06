@@ -1,12 +1,20 @@
 import { Command } from "commander";
 
-import { setLastWriteTenant } from "../config.js";
 import { CliError, EXIT } from "../exit-codes.js";
 import { addGlobalFlags } from "../global-flags.js";
 import { request } from "../http.js";
 import { normalizeResponse } from "../normalize.js";
 import { emit, printBanner, readBodyFromFlag, type GlobalFlags } from "../output.js";
-import { notImplemented, parseTimeout, resolveActive, translateBody, writePreamble } from "./entity.js";
+import { gateAndExit } from "../write-gate.js";
+import { notImplemented, parseTimeout, resolveActive, translateBody } from "./entity.js";
+
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
+}
 
 const DIALING_RULE_FIELD_MAP: Record<string, string> = {
   name: "Name",
@@ -89,7 +97,8 @@ export function buildDialingRuleCommand(): Command {
     .addHelpText(
       "after",
       "\nExample:\n  echo '{\"name\":\"UK\",\"template\":\"0{number}\",\"centerId\":\"<id>\"}' | hs dialing-rule create -f -\n\n" +
-        "Safety:\n  Single write — banner + recent-switch note. v3 tenants are read-only for dialing rules (exits 9).\n",
+        "Safety:\n  Two-phase gated — a dialing rule create has NO delete route (not undoable), so it exits 11 " +
+        "with a token; run `hs confirm <token>`. v3 tenants are read-only for dialing rules (exits 9).\n",
     )
     .action(async (opts: { file: string }, command: Command) => {
       const globals = command.optsWithGlobals<GlobalFlags>();
@@ -99,19 +108,26 @@ export function buildDialingRuleCommand(): Command {
 
       const body = asRecord(readBodyFromFlag(opts.file));
       const translated = translateBody(body, DIALING_RULE_FIELD_MAP, resolved);
+      const route = "/settings/dialing-rules/new";
       if (globals.dryRun) {
-        emit({ dryRun: true, method: "POST", path: "/settings/dialing-rules/new", body: translated, tenant: { alias: resolved.alias, apiVersion: "v2" } }, globals);
+        emit({ dryRun: true, method: "POST", path: route, body: translated, tenant: { alias: resolved.alias, apiVersion: "v2" } }, globals);
         return;
       }
-      writePreamble(cfg, resolved, globals);
-      const res = await request(profile, {
-        method: "POST",
-        path: "/settings/dialing-rules/new",
-        body: translated,
-        timeoutMs: parseTimeout(globals),
+      // A dialing-rule create is a rare config write with NO delete route (not
+      // undoable) — gate it via the two-phase write mechanism instead of executing.
+      const host = hostOf(resolved.profile.baseUrl);
+      const nameLabel = typeof body.name === "string" ? ` "${body.name}"` : "";
+      gateAndExit({
+        action: "create dialing-rule",
+        summary: `CREATE dialing-rule${nameLabel} on tenant ${resolved.profile.customerName} (${host}) — not undoable (no delete route).`,
+        resolved,
+        cfg,
+        globals,
+        requests: [{ method: "POST", path: route, body: translated }],
+        records: [{ id: "(new)", method: "POST", path: route }],
+        sampleLines: [`  [new] → POST ${route} ${JSON.stringify(translated)}`],
+        affectedCount: 1,
       });
-      setLastWriteTenant(resolved.alias);
-      emit(normalizeResponse(res.data, "v2", !!globals.raw), globals);
     });
 
   // ---- dialing-rule update <id> -f <body> ---------------------------------
@@ -122,7 +138,8 @@ export function buildDialingRuleCommand(): Command {
     .addHelpText(
       "after",
       "\nExample:\n  echo '{\"name\":\"UK\"}' | hs dialing-rule update <id> -f -\n\n" +
-        "Safety:\n  Single write — banner + recent-switch note. v3 tenants are read-only for dialing rules (exits 9).\n",
+        "Safety:\n  Two-phase gated — a dialing rule write is a rare config change with no undo path, so it exits 11 " +
+        "with a token; run `hs confirm <token>`. v3 tenants are read-only for dialing rules (exits 9).\n",
     )
     .action(async (id: string, opts: { file: string }, command: Command) => {
       const globals = command.optsWithGlobals<GlobalFlags>();
@@ -133,19 +150,25 @@ export function buildDialingRuleCommand(): Command {
       const body = asRecord(readBodyFromFlag(opts.file));
       const translated = translateBody(body, DIALING_RULE_FIELD_MAP, resolved);
       translated.Id = id;
+      const route = "/settings/dialing-rule/update";
       if (globals.dryRun) {
-        emit({ dryRun: true, method: "POST", path: "/settings/dialing-rule/update", body: translated, tenant: { alias: resolved.alias, apiVersion: "v2" } }, globals);
+        emit({ dryRun: true, method: "POST", path: route, body: translated, tenant: { alias: resolved.alias, apiVersion: "v2" } }, globals);
         return;
       }
-      writePreamble(cfg, resolved, globals);
-      const res = await request(profile, {
-        method: "POST",
-        path: "/settings/dialing-rule/update",
-        body: translated,
-        timeoutMs: parseTimeout(globals),
+      // A dialing-rule update is a rare config write — gate it via the two-phase
+      // write mechanism instead of executing directly.
+      const host = hostOf(resolved.profile.baseUrl);
+      gateAndExit({
+        action: "update dialing-rule",
+        summary: `UPDATE dialing-rule ${id} on tenant ${resolved.profile.customerName} (${host}).`,
+        resolved,
+        cfg,
+        globals,
+        requests: [{ method: "POST", path: route, body: translated }],
+        records: [{ id, method: "POST", path: route }],
+        sampleLines: [`  [${id}] → POST ${route} ${JSON.stringify(translated)}`],
+        affectedCount: 1,
       });
-      setLastWriteTenant(resolved.alias);
-      emit(normalizeResponse(res.data, "v2", !!globals.raw), globals);
     });
 
   return root;

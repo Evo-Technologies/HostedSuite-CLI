@@ -7,6 +7,7 @@ import { buildAvailabilityCommand } from "./commands/availability.js";
 import { addBulkCommands } from "./commands/bulk.js";
 import { buildCallAllowanceCommand } from "./commands/call-allowance.js";
 import { addCompletedFormExtras } from "./commands/completed-form.js";
+import { buildConfigCommand } from "./commands/config.js";
 import { buildConfirmCommand } from "./commands/confirm.js";
 import { buildDialingRuleCommand } from "./commands/dialing-rule.js";
 import { buildEntityCommand } from "./commands/entity.js";
@@ -49,6 +50,7 @@ function buildProgram(): Command {
 
   // ---- command groups -----------------------------------------------------
   program.addCommand(buildTenantCommand());  // tenant list|add|use|current|show|remove|probe
+  program.addCommand(buildConfigCommand());  // config list|get|set (persisted CLI settings)
   program.addCommand(buildWhoamiCommand());  // top-level `hs whoami` shortcut
   program.addCommand(buildAuthCommand());    // auth whoami | check
   program.addCommand(buildConfirmCommand()); // confirm <token>
