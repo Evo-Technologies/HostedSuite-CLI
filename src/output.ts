@@ -199,6 +199,9 @@ export function banner(msg: string, ctx: GlobalFlags): void {
  * because it routes the human through a re-verification.
  */
 export function recentSwitchNote(from: string | undefined, to: string): void {
-  const arrow = from ? `${from} → ${to}` : `→ ${to}`;
-  note(`NOTE: this write targets a different tenant than your last write (${arrow}) — re-verify with the user.`);
+  if (from) {
+    note(`NOTE: this write targets a different tenant (${from} → ${to}) than your last write — re-verify with the user before proceeding.`);
+  } else {
+    note(`NOTE: first write to tenant "${to}" this session — verify it is the intended tenant before proceeding.`);
+  }
 }

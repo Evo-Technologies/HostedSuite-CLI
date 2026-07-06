@@ -84,15 +84,14 @@ describe("recentTenantSwitch", () => {
     expect(recentTenantSwitch(cfg, "acme")).toBe(true);
   });
 
-  it("is true when the target was switched-to within the last 10 minutes", () => {
-    const cfg: ConfigFile = { ...seed("acme"), lastWriteTenant: "acme" };
-    cfg.tenants.acme.tenantChangedAt = new Date().toISOString();
+  it("is true on the first write of a session (no last-written tenant yet)", () => {
+    const cfg: ConfigFile = { ...seed("acme"), lastWriteTenant: undefined };
     expect(recentTenantSwitch(cfg, "acme")).toBe(true);
   });
 
-  it("is false when the target is the last-written tenant and the switch is stale", () => {
+  it("is false when the target is the last-written tenant, even if it was just added/switched", () => {
     const cfg: ConfigFile = { ...seed("acme"), lastWriteTenant: "acme" };
-    cfg.tenants.acme.tenantChangedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    cfg.tenants.acme.tenantChangedAt = new Date().toISOString(); // recent add must NOT re-fire during continuous work
     expect(recentTenantSwitch(cfg, "acme")).toBe(false);
   });
 });

@@ -135,21 +135,18 @@ export function setLastWriteTenant(alias: string): void {
 // Recent-switch detection (PLAN §3.3)
 // ---------------------------------------------------------------------------
 
-const RECENT_SWITCH_WINDOW_MS = 10 * 60_000;
-
 /**
  * True when a write targeting `targetAlias` should raise the recent-switch
- * warning: either the target differs from the last-written tenant, or the
- * target was switched-to / added within the last 10 minutes.
+ * warning: the target differs from the tenant of the most recent write (which
+ * is undefined on the first write of a session). This single condition already
+ * covers every pivot path — `tenant use`, `tenant add`, and a per-call
+ * `--tenant` override all make target !== lastWriteTenant on the next write.
+ * We intentionally do NOT also fire on "added within N minutes": that produced
+ * false positives (a self-contradictory "v3 → v3" note) on every write during
+ * continuous work on one tenant, which trains users to ignore the warning.
  */
 export function recentTenantSwitch(cfg: ConfigFile, targetAlias: string): boolean {
-  if (cfg.lastWriteTenant !== targetAlias) return true;
-  const changedAt = cfg.tenants[targetAlias]?.tenantChangedAt;
-  if (changedAt) {
-    const elapsed = Date.now() - new Date(changedAt).getTime();
-    if (elapsed >= 0 && elapsed < RECENT_SWITCH_WINDOW_MS) return true;
-  }
-  return false;
+  return cfg.lastWriteTenant !== targetAlias;
 }
 
 // ---------------------------------------------------------------------------
