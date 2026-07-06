@@ -2,7 +2,7 @@ import { CliError, EXIT, type ExitCode } from "./exit-codes.js";
 import { resolvePassword, type ApiVersion, type TenantProfile } from "./config.js";
 import { CRED_KEYS, redactCreds } from "./normalize.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export type QueryPrimitive = string | number | boolean;

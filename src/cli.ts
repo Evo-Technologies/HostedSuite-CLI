@@ -1,10 +1,12 @@
 import { Command } from "commander";
 
+import { maybeWarnCacheSize } from "./cache.js";
 import { addAiSettingsCommands } from "./commands/ai-settings.js";
 import { buildApiCommand } from "./commands/api.js";
 import { buildAuthCommand, buildWhoamiCommand } from "./commands/auth.js";
 import { buildAvailabilityCommand } from "./commands/availability.js";
 import { addBulkCommands } from "./commands/bulk.js";
+import { buildCacheCommand } from "./commands/cache.js";
 import { buildCallAllowanceCommand } from "./commands/call-allowance.js";
 import { addCompletedFormExtras } from "./commands/completed-form.js";
 import { buildConfigCommand } from "./commands/config.js";
@@ -25,7 +27,7 @@ import { addGlobalFlags, normalizeAliases } from "./global-flags.js";
 import { emit, type GlobalFlags } from "./output.js";
 import { findSubcommand, serializeCommand } from "./schema.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 function buildProgram(): Command {
   const program = new Command();
@@ -47,10 +49,12 @@ function buildProgram(): Command {
   addGlobalFlags(program);
 
   program.hook("preAction", normalizeAliases);
+  program.hook("preAction", maybeWarnCacheSize); // throttled cache-size warning (suppressible, best-effort)
 
   // ---- command groups -----------------------------------------------------
   program.addCommand(buildTenantCommand());  // tenant list|add|use|current|show|remove|probe
   program.addCommand(buildConfigCommand());  // config list|get|set (persisted CLI settings)
+  program.addCommand(buildCacheCommand());   // cache info|clean (local plan/journal housekeeping)
   program.addCommand(buildWhoamiCommand());  // top-level `hs whoami` shortcut
   program.addCommand(buildAuthCommand());    // auth whoami | check
   program.addCommand(buildConfirmCommand()); // confirm <token>

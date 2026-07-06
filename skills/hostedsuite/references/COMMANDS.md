@@ -95,7 +95,7 @@ hs config set <key> <value>
 
 Persisted CLI settings — org-wide behavior toggles, not tied to any tenant (the command itself never
 targets a tenant). Stored under `settings` in the config file (`~/.config/hostedsuite/config.json`).
-Currently one key:
+Keys:
 
 - `require-tenant` (bool: `true`/`false`/`1`/`0`) — strict mode. When on, every command must be
   given a tenant explicitly via `--tenant <alias>` or `HS_TENANT=<alias>`; the ambient active tenant
@@ -105,8 +105,26 @@ Currently one key:
   **Default when unset: ON once 2+ tenants are configured** (the wrong-tenant footgun only exists with
   multiple tenants; a single-tenant setup stays lax). `true` forces it on even single-tenant; `false`
   turns it fully off.
+- `cache-warn-mb` (number, default `50`, `0` disables) — warn threshold for the local cache size
+  (see `## cache` below). Checked at most once per 6 hours.
 
 Example: `hs config set require-tenant false` — opt out of strict mode; allow the ambient active tenant.
+
+## cache
+
+```
+hs cache info                        # location + sizes: plans, journal, total, warn threshold
+hs cache clean                       # remove consumed + expired plan dirs (always safe)
+hs cache clean --journal-days 90     # ALSO drop journal entries older than 90 days
+hs cache clean -n                    # dry-run: report what would be removed
+```
+
+Local housekeeping for `~/.cache/hostedsuite` (bulk plans + change journal); never targets a tenant.
+When the cache exceeds `cache-warn-mb` (default 50 MB), every command prints a one-line stderr note
+(suppressible with `--quiet`, re-checked at most once per 6 h) pointing here. Plan pruning is always
+safe — it only removes dirs that can no longer be confirmed (already consumed, or past their 5-minute
+TTL). Journal trimming is **opt-in** via `--journal-days <n>` because dropped entries can no longer be
+reverted with `hs undo`.
 
 ## whoami / auth
 

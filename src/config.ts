@@ -20,6 +20,8 @@ export interface TenantProfile {
 export interface Settings {
   /** Strict "require-tenant" mode: refuse ambient active-tenant fallback (see resolveActiveTenant). */
   requireTenant?: boolean;
+  /** Warn when ~/.cache/hostedsuite exceeds this many MB (default 50; 0 disables). */
+  cacheWarnMb?: number;
 }
 
 export interface ConfigFile {

@@ -1,6 +1,6 @@
 {
   "name": "hostedsuite-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Command-line interface for HostedSuite — for support staff and AI agents. Installs the `hs` binary. Host-agnostic: tenants are added at runtime.",
   "type": "module",
   "bin": {
