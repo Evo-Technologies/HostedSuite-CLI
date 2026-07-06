@@ -38,6 +38,15 @@ approval step here is what killed the predecessor tool. In exchange:
   last one actually written to, or was switched-to/added within the last 10 minutes. This note is
   never suppressed by `--quiet`. Stop and re-verify before proceeding when you see it.
 
+### State the tenant before any write
+
+The human talks to **you** — they do not see the terminal, the banner, or `whoami`'s JSON. So the
+only way they learn which account a change will hit is if **you tell them**. Before any write —
+single or bulk — say which tenant it targets in plain language, e.g. *"On **Acme Corp** (prod), I'll
+patch this 1 client's greeting."* Do this even for ungated single writes; it's the only feedback the
+human gets before the change lands. If they meant a different account, they'll catch it here.
+Mistakes are recoverable (see **Undo & history**), but surfacing the tenant first is your job.
+
 ### Bulk writes: two-phase, always
 
 **Every** `bulk-patch` / `bulk-archive` / `bulk-restore` invocation is gated — 1 matched record still
@@ -259,6 +268,29 @@ implies bulk-archive/bulk-restore support too.
 If `hs confirm` is killed mid-run, `progress.json` next to the consumed plan shows exactly which
 records were already applied — build a retry `--ids-file` from the unapplied set (or the
 `failuresPath` the command reports) and re-run phase 1 fresh; a consumed token is never resurrected.
+
+## Undo & history
+
+Every write is journaled (before + after, per record, per tenant) — so a mistake is one command to
+reverse. This is the recovery net that lets single writes stay ungated.
+
+```sh
+hs history                       # recent operations on the active tenant: opId, action, #records, (undone)
+hs history --tenant beta -n 50   # a specific tenant, more rows
+hs undo                          # revert the most recent not-yet-undone operation
+hs undo mr9l60ku-4705c8          # revert a specific operation by opId
+```
+
+`hs undo` reverses each record the way you'd expect: a field patch goes back to its prior value, a
+create is archived, a delete is restored. It **pins to the operation's tenant** (aborts if that alias
+no longer maps to the same customer+host), and it is **concurrency-safe** — it SKIPS any record that
+changed since your write (so it never clobbers someone else's edit) and reports which it skipped
+(`reverted: N, skipped: [...]`). Undo is itself journaled, so it's redoable.
+
+When the user says "undo that" / "put it back" / "revert", use `hs undo` (or `hs history` first to
+pick the right op). **One caveat to tell them:** undo reverts the **data**, not side effects — it does
+not un-send notifications or un-fire webhooks. For a change that triggers integrations (e.g. anything
+that fires a webhook to the reseller portal), say plainly that those already went out.
 
 ## AI settings
 

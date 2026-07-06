@@ -106,6 +106,26 @@ Requests execute **serially** (no concurrency flag currently). Progress is appen
 `progress.json` after every record — a killed mid-run process leaves an accurate applied-set on disk,
 usable to build a retry `--ids-file`.
 
+## history / undo
+
+Every write (`create`/`patch`/`delete`/`restore`, single and bulk, v2+v3) appends a before/after entry
+to a per-tenant journal at `~/.cache/hostedsuite/journal/<alias>.jsonl`. Disable with `HS_NO_JOURNAL=1`.
+
+```
+hs history [--tenant <alias>] [-n <N=20>] [--all]   # recent ops: opId, ts, action, #records, (undone)
+hs undo [<opId>]                                     # revert an op (default = latest not-yet-undone)
+```
+
+`hs undo` reverses each record: `update` → reverse-patch to the prior value, `create` → archive,
+`delete` → restore, `restore` → archive. It **pins to the journaled tenant** (aborts, exit 10, if that
+alias no longer maps to the same customer+host) and is **concurrency-safe**: any record whose current
+state differs from the journaled `after` is **skipped** (never clobbers an intervening edit) and
+reported in `skipped[]`. Result: `{ undone, reverted: N, skipped: [{id, reason}], newOpId }`. Undo is
+itself journaled, so it is redoable (`hs undo <the-undo-opId>`).
+
+**Limit:** undo reverts DATA only — it does not un-send notifications or un-fire webhooks. Not routed
+through the bulk gate (it's an explicit recovery action), but it prints the tenant banner.
+
 ## `<noun>` — generic entity commands
 
 Every registry noun (table below) gets the same five verbs from one command factory, except
