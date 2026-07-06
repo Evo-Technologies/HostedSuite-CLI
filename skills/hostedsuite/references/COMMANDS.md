@@ -441,7 +441,7 @@ verb exits 9 on a v2 tenant.
 | Noun | v3 base | v2 | Notes |
 |---|---|---|---|
 | `client` | `/clients` | yes (full CRUD) | `ai-settings`/`prompt-lint` attach here |
-| `contact` | `/contacts` | yes (full CRUD) | v2 exposes `--first-name/--last-name/--email/--phone`; `--query`→`LastName` |
+| `contact` | `/contacts` | yes (full CRUD) | v2 exposes `--first-name/--last-name/--email/--phone`; `--query`→`LastName`; carries a portal login (`userName`/`password`/`loginDisabled`) — `loginDisabled` gates the web portal sign-in (contacts book meeting rooms), NOT the API; patch it true/false to disable/restore portal access |
 | `center` | `/centers` | partial (list/create/update/hard-delete) | no v2 `get` (no id filter) or archive/restore — plain `delete` (no `--hard`) exits 9 |
 | `charge` | `/charges` | list + create only | v3 adds `--service-id`/`--contact-id`/`--memorized`/`--charged-after/-before` (dateOfCharge); v2 list uses `--start-date`/`--end-date`/`--date-selector` instead; no v2 update/delete/get |
 | `service` | `/services` | list only | |

@@ -244,6 +244,19 @@ Un-archive: `hs client patch <id> --restore` (a flag on `patch`, not a separate 
 archives, recoverable; v2 archives by default, `--hard` opts into the true delete route where one
 exists — see COMMANDS.md for which entities have it).
 
+### Portal login access (`loginDisabled`)
+
+Contacts (also team members / admins) can have a **customer-portal login** — the web sign-in where a
+contact books meeting rooms and views their account. That is a *separate auth path* from the API the
+CLI itself uses, with its own fields on the contact: `userName`, `password` (write-only — set via
+`patch`, always redacted on read), `loginDisabled`, and `failedLoginAttempts`.
+
+- **Disable an end-user's portal login:** `hs contact patch <id> -f '{"loginDisabled":true}'`. The
+  portal then rejects that sign-in with *"This login has been disabled"*; `{"loginDisabled":false}`
+  restores it. This does **not** touch API/CLI access — it is a different door.
+- **Locked out?** The server auto-sets `loginDisabled=true` after repeated failed portal logins (check
+  `failedLoginAttempts` via `get`); re-enable with `{"loginDisabled":false}`.
+
 **The CLEARS-REFERENCE footgun**: on v3, PATCH applies only non-null fields — `null` is silently
 ignored, so you cannot use `null` to clear a reference. The *only* way to detach an `xId` reference
 field is `""`. Always `--dry-run` a patch touching a reference field and read the `CLEARS REFERENCE`
