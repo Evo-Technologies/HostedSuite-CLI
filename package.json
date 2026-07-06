@@ -1,0 +1,51 @@
+{
+  "name": "hostedsuite-cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for HostedSuite — for support staff and AI agents. Installs the `hs` binary. Host-agnostic: tenants are added at runtime.",
+  "type": "module",
+  "bin": {
+    "hs": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Evo-Technologies/HostedSuite-CLI.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "keywords": [
+    "hostedsuite",
+    "cli",
+    "hs",
+    "claude",
+    "claude-code",
+    "skill",
+    "agent"
+  ],
+  "license": "MIT"
+}
