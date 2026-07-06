@@ -17,6 +17,7 @@ import { buildRemotePhonesCommand } from "./commands/remote-phones.js";
 import { buildReportCommand } from "./commands/report.js";
 import { buildTenantCommand } from "./commands/tenant.js";
 import { buildTimeZonesCommand } from "./commands/time-zones.js";
+import { buildHistoryCommand, buildUndoCommand } from "./commands/undo.js";
 import { ENTITIES } from "./entities.js";
 import { CliError, EXIT, EXIT_DESCRIPTIONS } from "./exit-codes.js";
 import { addGlobalFlags, normalizeAliases } from "./global-flags.js";
@@ -51,6 +52,8 @@ function buildProgram(): Command {
   program.addCommand(buildWhoamiCommand());  // top-level `hs whoami` shortcut
   program.addCommand(buildAuthCommand());    // auth whoami | check
   program.addCommand(buildConfirmCommand()); // confirm <token>
+  program.addCommand(buildHistoryCommand()); // history — list journaled changes
+  program.addCommand(buildUndoCommand());    // undo [opId] — reverse a journaled change
   program.addCommand(buildApiCommand());     // raw escape hatch: hs api <method> <path>
   program.addCommand(buildReportCommand());  // report list | run <name>
   program.addCommand(buildFileCommand());    // file get | upload

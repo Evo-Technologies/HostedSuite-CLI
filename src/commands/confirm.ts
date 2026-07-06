@@ -11,12 +11,19 @@ import {
   type PlanRequest,
   type ResolvedTenant,
 } from "../config.js";
+import { findEntityByPlural, type EntityDef } from "../entities.js";
 import { CliError, EXIT } from "../exit-codes.js";
 import { addGlobalFlags } from "../global-flags.js";
 import { request } from "../http.js";
+import {
+  extractType,
+  recordWrite,
+  type JournalOperation,
+  type JournalRecord,
+} from "../journal.js";
 import { normalizeResponse } from "../normalize.js";
 import { emit, note, printBanner, type GlobalFlags } from "../output.js";
-import { parseTimeout } from "./entity.js";
+import { fetchCurrentRecord, parseTimeout } from "./entity.js";
 
 interface RecordOutcome {
   index: number;
@@ -74,11 +81,31 @@ export function buildConfirmCommand(): Command {
       const outcomes: RecordOutcome[] = [];
       const failed: RecordOutcome[] = [];
 
+      // Journaling context derived from the plan's action ("bulk-<verb> <plural>").
+      const journal = bulkJournalContext(plan.action);
+      const journalRecords: JournalRecord[] = [];
+
       for (let i = 0; i < plan.requests.length; i += 1) {
         const req = plan.requests[i];
+        const id = journal ? requestId(journal.def, profile.apiVersion, journal.operation, req) : "";
+        // Snapshot `before` prior to the write (skip for a create, which has none).
+        let before: unknown | null = null;
+        if (journal && id && journal.operation !== "create") {
+          before = await fetchCurrentRecord(journal.def, id, profile, globals);
+        }
         try {
-          await executeRequest(profile.apiVersion, profile, req, globals);
+          const after = await executeRequest(profile.apiVersion, profile, req, globals);
           outcomes.push({ index: i, method: req.method, path: req.path, status: "applied" });
+          if (journal) {
+            journalRecords.push({
+              entityNoun: journal.def.noun,
+              id,
+              type: extractType(after) ?? extractType(before),
+              operation: journal.operation,
+              before: before ?? null,
+              after: journal.operation === "delete" ? null : (after ?? null),
+            });
+          }
         } catch (err) {
           const outcome: RecordOutcome = {
             index: i,
@@ -95,6 +122,8 @@ export function buildConfirmCommand(): Command {
       }
 
       setLastWriteTenant(plan.tenant.alias);
+      // Journal one entry for all successfully-applied records (best-effort).
+      if (journalRecords.length > 0) recordWrite(resolved, plan.action, journalRecords);
 
       const appliedCount = outcomes.filter((o) => o.status === "applied").length;
       const result: Record<string, unknown> = {
@@ -118,7 +147,7 @@ async function executeRequest(
   profile: Parameters<typeof request>[0],
   req: PlanRequest,
   globals: GlobalFlags,
-): Promise<void> {
+): Promise<unknown> {
   const res = await request(profile, {
     method: req.method,
     path: req.path,
@@ -127,8 +156,57 @@ async function executeRequest(
     retry: false, // never auto-retry a write — it may have applied
     timeoutMs: parseTimeout(globals),
   });
-  // Normalize/redact defensively (result is not emitted per-record, but keeps creds out of any log).
-  void normalizeResponse(res.data, apiVersion as "v2" | "v3", true);
+  // Canonical normalize/redact (non-raw) — used as the journal `after` snapshot; keeps creds out of any log.
+  return normalizeResponse(res.data, apiVersion as "v2" | "v3", false);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk journaling helpers
+// ---------------------------------------------------------------------------
+
+interface BulkJournalContext {
+  def: EntityDef;
+  operation: JournalOperation;
+}
+
+/**
+ * Derive the journaling entity + operation from a bulk plan's action string,
+ * which the bulk engine builds as `bulk-<verb> <plural>` (e.g. "bulk-archive
+ * contacts"). Returns undefined when the noun cannot be resolved (journaling is
+ * then skipped — best-effort).
+ */
+function bulkJournalContext(action: string): BulkJournalContext | undefined {
+  const space = action.indexOf(" ");
+  if (space === -1) return undefined;
+  const verb = action.slice(0, space);
+  const plural = action.slice(space + 1).trim();
+  const def = findEntityByPlural(plural);
+  if (!def) return undefined;
+  let operation: JournalOperation;
+  if (verb === "bulk-patch") operation = "update";
+  else if (verb === "bulk-archive") operation = "delete";
+  else if (verb === "bulk-restore") operation = "restore";
+  else return undefined;
+  return { def, operation };
+}
+
+/** Recover a record id from a stored plan request (path segment / body id / v2 idField). */
+function requestId(def: EntityDef, apiVersion: string, operation: JournalOperation, req: PlanRequest): string {
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? (req.body as Record<string, unknown>)
+    : {};
+  if (apiVersion === "v3") {
+    if (typeof body.id === "string" && body.id.length > 0) return body.id;
+    const seg = req.path.split("/").filter(Boolean).pop();
+    return seg ? decodeURIComponent(seg) : "";
+  }
+  const v2 = def.v2;
+  let idField: string | undefined;
+  if (operation === "update") idField = v2?.update?.idField;
+  else if (operation === "delete") idField = v2?.archive?.idField ?? v2?.hardDelete?.idField;
+  else if (operation === "restore") idField = v2?.restore?.idField;
+  const v = idField ? body[idField] : undefined;
+  return v === undefined || v === null ? "" : String(v);
 }
 
 function writeJsonQuiet(target: string, data: unknown): void {

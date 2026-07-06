@@ -757,3 +757,8 @@ export const ENTITIES: EntityDef[] = [
 export function findEntity(noun: string): EntityDef | undefined {
   return ENTITIES.find((e) => e.noun === noun);
 }
+
+/** Look up an entity by its plural (used to map a bulk plan's action back to its noun). */
+export function findEntityByPlural(plural: string): EntityDef | undefined {
+  return ENTITIES.find((e) => e.plural === plural);
+}

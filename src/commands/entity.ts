@@ -13,6 +13,11 @@ import type { EntityDef, EntityV2, EntityV3, FlagDef } from "../entities.js";
 import { CliError, EXIT } from "../exit-codes.js";
 import { addGlobalFlags } from "../global-flags.js";
 import { request, type Query, type QueryValue, type RequestSpec } from "../http.js";
+import {
+  extractType,
+  recordWrite,
+  type JournalOperation,
+} from "../journal.js";
 import { normalizeResponse, redactCreds } from "../normalize.js";
 import {
   banner,
@@ -430,6 +435,7 @@ function addCreate(root: Command, def: EntityDef): void {
         writePreamble(cfg, resolved, globals);
         const out = await sendNormalized(profile, { method: "POST", path: def.v3.uriBase, body }, globals);
         setLastWriteTenant(resolved.alias);
+        journalOne(resolved, `create ${def.noun}`, def, extractResponseId(out, def), "create", null, out);
         emit(out, globals);
         return;
       }
@@ -444,6 +450,7 @@ function addCreate(root: Command, def: EntityDef): void {
       writePreamble(cfg, resolved, globals);
       const out = await sendNormalized(profile, { method: "POST", path: v2.create.route, body: translated }, globals);
       setLastWriteTenant(resolved.alias);
+      journalOne(resolved, `create ${def.noun}`, def, extractResponseId(out, def), "create", null, out);
       emit(out, globals);
     });
 }
@@ -471,7 +478,7 @@ function addPatch(root: Command, def: EntityDef): void {
 
       if (profile.apiVersion === "v3") {
         if (!def.v3) notImplemented(`${def.noun} patch`, resolved);
-        await patchV3(def.v3, id, fileBody, !!opts.restore, globals, profile, resolved);
+        await patchV3(def, id, fileBody, !!opts.restore, globals, profile, resolved);
         return;
       }
       await patchV2(def, id, fileBody, !!opts.restore, globals, profile, cfg, resolved);
@@ -479,7 +486,7 @@ function addPatch(root: Command, def: EntityDef): void {
 }
 
 async function patchV3(
-  v3: EntityV3,
+  def: EntityDef,
   id: string,
   fileBody: Record<string, unknown>,
   restore: boolean,
@@ -487,6 +494,7 @@ async function patchV3(
   profile: TenantProfile,
   resolved: ResolvedTenant,
 ): Promise<void> {
+  const v3 = def.v3 as EntityV3;
   const bodyId = v3.patchStyle === "body-id";
   const path = bodyId ? v3.uriBase : `${v3.uriBase}/${encodeURIComponent(id)}`;
   const body: Record<string, unknown> = { ...fileBody };
@@ -507,8 +515,11 @@ async function patchV3(
 
   const { cfg } = resolveActive(globals);
   writePreamble(cfg, resolved, globals);
+  // Snapshot the current record BEFORE the write so undo can reverse it (best-effort).
+  const before = await fetchCurrentRecord(def, id, profile, globals);
   const out = await sendNormalized(profile, { method: "PATCH", path, body }, globals);
   setLastWriteTenant(resolved.alias);
+  journalOne(resolved, `patch ${def.noun}`, def, id, restore ? "restore" : "update", before, out);
   emit(out, globals);
 }
 
@@ -533,6 +544,8 @@ async function patchV2(
   }
 
   writePreamble(cfg, resolved, globals);
+  // Snapshot the current record BEFORE the write so undo can reverse it (best-effort).
+  const before = await fetchCurrentRecord(def, id, profile, globals);
   const results: unknown[] = [];
 
   if (restore) {
@@ -548,7 +561,9 @@ async function patchV2(
   }
 
   setLastWriteTenant(resolved.alias);
-  emit(results.length === 1 ? results[0] : { results }, globals);
+  const after = results.length === 1 ? results[0] : { results };
+  journalOne(resolved, `patch ${def.noun}`, def, id, restore ? "restore" : "update", before, after);
+  emit(after, globals);
 }
 
 async function fetchV2Current(
@@ -565,6 +580,74 @@ async function fetchV2Current(
   }, globals);
   const first = firstItem(listed);
   return first && typeof first === "object" ? (first as Record<string, unknown>) : {};
+}
+
+// ---------------------------------------------------------------------------
+// Journaling helpers (shared with confirm.ts / undo.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the current server state of one record, in the canonical (non-raw)
+ * normalized shape — so journaled `before`/`after` snapshots and undo-time
+ * re-fetches compare apples to apples regardless of the caller's `--raw`. v3
+ * GETs `/{uriBase}/{id}` (or the singleton uriBase); v2 emulates via the list
+ * route. Returns null on any failure (best-effort — never throws).
+ */
+export async function fetchCurrentRecord(
+  def: EntityDef,
+  id: string,
+  profile: TenantProfile,
+  globals: GlobalFlags,
+): Promise<Record<string, unknown> | null> {
+  const canonical: GlobalFlags = { ...globals, raw: false };
+  try {
+    if (profile.apiVersion === "v3") {
+      if (!def.v3) return null;
+      const path = def.v3.singleton ? def.v3.uriBase : `${def.v3.uriBase}/${encodeURIComponent(id)}`;
+      const cur = await sendNormalized(profile, { method: "GET", path }, canonical);
+      return cur && typeof cur === "object" && !Array.isArray(cur) ? (cur as Record<string, unknown>) : null;
+    }
+    if (!def.v2) return null;
+    const cur = await fetchV2Current(def.v2, id, profile, canonical);
+    return Object.keys(cur).length > 0 ? cur : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort id extraction from a create response (id / _id / <noun>Id). */
+export function extractResponseId(obj: unknown, def: EntityDef): string {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return "";
+  const rec = obj as Record<string, unknown>;
+  const camelNoun = def.noun.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+  for (const k of ["id", "_id", `${camelNoun}Id`]) {
+    const v = rec[k];
+    if (typeof v === "string" && v.length > 0) return v;
+    if (typeof v === "number") return String(v);
+  }
+  return "";
+}
+
+/** Append a one-record journal entry for a successful single write (best-effort). */
+function journalOne(
+  resolved: ResolvedTenant,
+  action: string,
+  def: EntityDef,
+  id: string,
+  operation: JournalOperation,
+  before: unknown | null,
+  after: unknown | null,
+): void {
+  recordWrite(resolved, action, [
+    {
+      entityNoun: def.noun,
+      id,
+      type: extractType(after) ?? extractType(before),
+      operation,
+      before: before ?? null,
+      after: after ?? null,
+    },
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -597,8 +680,10 @@ function addDelete(root: Command, def: EntityDef): void {
           return;
         }
         writePreamble(cfg, resolved, globals);
+        const before = await fetchCurrentRecord(def, id, profile, globals);
         const out = await sendNormalized(profile, { method: "DELETE", path }, globals);
         setLastWriteTenant(resolved.alias);
+        journalOne(resolved, `delete ${def.noun}`, def, id, "delete", before, null);
         emit(out ?? { ok: true }, globals);
         return;
       }
@@ -616,8 +701,10 @@ function addDelete(root: Command, def: EntityDef): void {
         return;
       }
       writePreamble(cfg, resolved, globals);
+      const before = await fetchCurrentRecord(def, id, profile, globals);
       const out = await sendNormalized(profile, { method: "POST", path: target.route, body }, globals);
       setLastWriteTenant(resolved.alias);
+      journalOne(resolved, `delete ${def.noun}`, def, id, "delete", before, null);
       emit(out ?? { ok: true }, globals);
     });
 }
@@ -656,8 +743,10 @@ function addSingletonPatch(root: Command, def: EntityDef): void {
         return;
       }
       writePreamble(cfg, resolved, globals);
+      const before = await fetchCurrentRecord(def, def.noun, resolved.profile, globals);
       const out = await sendNormalized(resolved.profile, { method: "PATCH", path: def.v3.uriBase, body }, globals);
       setLastWriteTenant(resolved.alias);
+      journalOne(resolved, `patch ${def.noun}`, def, def.noun, "update", before, out);
       emit(out, globals);
     });
 }
